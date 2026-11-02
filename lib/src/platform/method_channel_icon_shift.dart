@@ -2,9 +2,11 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import '../config/platform.dart';
+import '../models/application_info.dart';
 import '../models/capabilities.dart';
 import '../models/validation.dart';
 import 'icon_shift_platform_interface.dart';
+import 'version_json.dart';
 
 /// [IconShiftPlatformInterface] backed by the `icon_shift` method channel,
 /// used by the Android, iOS, macOS, Windows and Linux implementations.
@@ -76,6 +78,20 @@ class MethodChannelIconShift extends IconShiftPlatformInterface {
   @override
   Future<void> saveSelection(Map<String, String> selection) => methodChannel
       .invokeMethod<void>('saveSelection', {'selection': selection});
+
+  @override
+  Future<ApplicationInfo> getApplicationInfo() async {
+    final map =
+        await methodChannel.invokeMapMethod<Object?, Object?>(
+          'getApplicationInfo',
+        ) ??
+        {};
+    final platform = IconShiftPlatform.current;
+    if (platform == IconShiftPlatform.linux && map['version'] == null) {
+      map.addAll(readBundledVersionJson());
+    }
+    return ApplicationInfo.fromMap(platform, map);
+  }
 
   static ValidationIssue _issueFromMap(
     Map<Object?, Object?> map,

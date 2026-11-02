@@ -277,7 +277,7 @@ void main() {
       await engine.initialize(demoConfig);
       native.calls.clear();
       final result = await engine.setIcon('dark');
-      expect(result.icon.errorCode, IconShiftErrorCode.missingNativeResource);
+      expect(result.icon.errorCode, IconShiftErrorCode.missingAsset);
       expect(native.calls, isEmpty);
     });
 

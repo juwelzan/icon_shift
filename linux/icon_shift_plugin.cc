@@ -239,11 +239,57 @@ static FlMethodResponse* inspect(IconShiftPlugin* self) {
       info, "sandbox",
       fl_value_new_string(g_getenv("FLATPAK_ID") != nullptr ? "flatpak"
                           : g_getenv("SNAP") != nullptr     ? "snap"
+                          : g_getenv("APPIMAGE") != nullptr ? "appimage"
                                                             : "none"));
 
   g_autoptr(FlValue) map = fl_value_new_map();
   fl_value_set_string_take(map, "issues", fl_value_new_list());
   fl_value_set(map, fl_value_new_string("info"), info);
+  return success(map);
+}
+
+// How the app is installed, from the environment the sandbox/packaging
+// tools set and the executable's location.
+static const gchar* installation_type(const gchar* exe) {
+  if (g_getenv("FLATPAK_ID") != nullptr) return "flatpak";
+  if (g_getenv("SNAP") != nullptr) return "snap";
+  if (g_getenv("APPIMAGE") != nullptr) return "appImage";
+  if (exe != nullptr &&
+      (g_str_has_prefix(exe, "/usr/") || g_str_has_prefix(exe, "/opt/"))) {
+    return "standard";
+  }
+  return "unpackaged";
+}
+
+static FlMethodResponse* get_application_info(IconShiftPlugin* self) {
+  g_autoptr(FlValue) map = fl_value_new_map();
+  GApplication* app = g_application_get_default();
+  const gchar* app_id =
+      app != nullptr ? g_application_get_application_id(app) : nullptr;
+  if (app_id != nullptr) {
+    fl_value_set_string_take(map, "applicationId", fl_value_new_string(app_id));
+  }
+  g_autofree gchar* exe = g_file_read_link("/proc/self/exe", nullptr);
+  if (exe != nullptr) {
+    g_autofree gchar* name = g_path_get_basename(exe);
+    fl_value_set_string_take(map, "executableName", fl_value_new_string(name));
+  }
+  fl_value_set_string_take(map, "installationType",
+                           fl_value_new_string(installation_type(exe)));
+  GtkWindow* window = get_window(self);
+  if (window != nullptr) {
+    fl_value_set_string_take(map, "windowTitle",
+                             fl_value_new_string(get_title(window)));
+  }
+#if GLIB_CHECK_VERSION(2, 64, 0)
+  g_autofree gchar* os = g_get_os_info(G_OS_INFO_KEY_PRETTY_NAME);
+  if (os != nullptr) {
+    fl_value_set_string_take(map, "osVersion", fl_value_new_string(os));
+  }
+#endif
+  // The display name lives in the installed .desktop file, which the app
+  // cannot reliably locate; the version is read by the Dart side from
+  // version.json. Neither is guessed here.
   return success(map);
 }
 
@@ -317,6 +363,9 @@ FlMethodResponse* icon_shift_plugin_handle(IconShiftPlugin* self,
   if (strcmp(method, "setIcon") == 0) return set_icon(self, args);
   if (strcmp(method, "setDisplayName") == 0) return set_display_name(self, args);
   if (strcmp(method, "inspect") == 0) return inspect(self);
+  if (strcmp(method, "getApplicationInfo") == 0) {
+    return get_application_info(self);
+  }
   if (strcmp(method, "loadSelection") == 0) return load_selection();
   if (strcmp(method, "saveSelection") == 0) return save_selection(args);
   return FL_METHOD_RESPONSE(fl_method_not_implemented_response_new());

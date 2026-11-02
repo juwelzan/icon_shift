@@ -1,0 +1,67 @@
+{
+  "id": "20261102_232618",
+  "label": "generate",
+  "created": "2026-11-02T23:26:18.879238",
+  "files": [
+    {
+      "path": "android/app/src/main/res/mipmap-hdpi/ic_icon_shift_default.png",
+      "existedBefore": true,
+      "deleted": false
+    },
+    {
+      "path": "android/app/src/main/res/mipmap-xxhdpi/ic_icon_shift_default.png",
+      "existedBefore": true,
+      "deleted": false
+    },
+    {
+      "path": "android/app/src/main/res/mipmap-hdpi/ic_icon_shift_dark.png",
+      "existedBefore": true,
+      "deleted": false
+    },
+    {
+      "path": "android/app/src/main/res/mipmap-xxhdpi/ic_icon_shift_dark.png",
+      "existedBefore": true,
+      "deleted": false
+    },
+    {
+      "path": "android/app/src/main/res/mipmap-hdpi/ic_icon_shift_blue.png",
+      "existedBefore": true,
+      "deleted": false
+    },
+    {
+      "path": "android/app/src/main/res/mipmap-xxhdpi/ic_icon_shift_blue.png",
+      "existedBefore": true,
+      "deleted": false
+    },
+    {
+      "path": "android/app/src/main/res/values/icon_shift.xml",
+      "existedBefore": true,
+      "deleted": false
+    },
+    {
+      "path": "android/app/src/main/res/values-de/icon_shift.xml",
+      "existedBefore": false,
+      "deleted": false
+    },
+    {
+      "path": "android/app/src/main/AndroidManifest.xml",
+      "existedBefore": true,
+      "deleted": false
+    },
+    {
+      "path": "ios/Runner/Assets.xcassets/dark.appiconset/Contents.json",
+      "existedBefore": true,
+      "deleted": false
+    },
+    {
+      "path": "ios/Runner/Assets.xcassets/blue.appiconset/Contents.json",
+      "existedBefore": true,
+      "deleted": false
+    },
+    {
+      "path": "lib/icon_shift_config.g.dart",
+      "existedBefore": true,
+      "deleted": false
+    }
+  ]
+}

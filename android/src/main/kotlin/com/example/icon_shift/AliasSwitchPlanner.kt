@@ -5,6 +5,8 @@ data class AliasState(
     val componentName: String,
     val variantId: String,
     val enabled: Boolean,
+    /** Replacement variant if this alias belongs to a retired variant. */
+    val retiredTo: String? = null,
 )
 
 /** A component state change: enable or disable [componentName]. */
@@ -46,6 +48,23 @@ object AliasSwitchPlanner {
             toDisable.forEach { add(SwitchStep(it.componentName, enable = false)) }
         }
         return SwitchPlan.Apply(steps)
+    }
+
+    /**
+     * The variant to switch to at startup so the app keeps exactly one usable
+     * launcher entry, or null when nothing needs repairing. Several enabled
+     * aliases are left alone (reported by inspect) rather than guessed.
+     */
+    fun recoveryTarget(aliases: List<AliasState>, defaultVariant: String = "default"): String? {
+        if (aliases.isEmpty()) return null
+        val enabled = aliases.filter { it.enabled }
+        val wanted = when {
+            enabled.isEmpty() -> defaultVariant
+            enabled.size == 1 && enabled.single().retiredTo != null -> enabled.single().retiredTo!!
+            else -> return null
+        }
+        val usable = aliases.any { it.variantId == wanted && it.retiredTo == null }
+        return if (usable) wanted else defaultVariant
     }
 
     /** The variant whose alias is the only enabled one, or null if 0 or >1. */

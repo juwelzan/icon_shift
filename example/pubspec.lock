@@ -120,14 +120,14 @@ packages:
       path: ".."
       relative: true
     source: path
-    version: "0.1.0"
-  icon_shift_generator:
+    version: "0.2.0"
+  icon_shift_cli:
     dependency: "direct dev"
     description:
-      path: "../generator"
+      path: "../cli"
       relative: true
     source: path
-    version: "0.1.0"
+    version: "0.2.0"
   image:
     dependency: transitive
     description:

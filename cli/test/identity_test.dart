@@ -444,6 +444,11 @@ dart:
         contains('<string name="icon_shift_label_default">Demo DE</string>'),
       );
       expect(read('$res/values-pt-rBR/icon_shift.xml'), contains('Demo BR'));
+      expect(
+        read('$res/values-de/icon_shift.xml'),
+        contains('<string name="icon_shift_label_dark">Dark</string>'),
+        reason: 'own name beats an inherited translation (as in the plugin)',
+      );
       final aliases = read('android/app/src/main/AndroidManifest.xml');
       expect(aliases, contains('android:name=".IconShiftAlias_old_blue"'));
       expect(

@@ -241,14 +241,38 @@ class GeneratorConfig {
       vo?.name ?? variant?.name ?? dO?.name ?? defaultIdentity.name,
       ownIcon ?? dO?.icon ?? defaultIdentity.icon,
       ownIcon == null,
-      names: {
-        ...defaultIdentity.names,
-        ...?dO?.names,
-        ...?variant?.names,
-        ...?vo?.names,
-      },
+      names: _localizedNames([
+        (vo?.name, vo?.names),
+        (variant?.name, variant?.names),
+        (dO?.name, dO?.names),
+        (defaultIdentity.name, defaultIdentity.names),
+      ]),
       override: id == defaultVariantId ? dO : vo,
     );
+  }
+
+  /// Per locale, the first level (most specific first) that defines either a
+  /// translation for it or a plain name wins — same as the plugin, so a
+  /// variant's own name beats an inherited translation.
+  static Map<String, String> _localizedNames(
+    List<(String?, Map<String, String>?)> levels,
+  ) {
+    final locales = {for (final (_, names) in levels) ...?names?.keys};
+    final result = <String, String>{};
+    for (final locale in locales) {
+      for (final (name, names) in levels) {
+        final translated = names?[locale];
+        if (translated != null) {
+          result[locale] = translated;
+          break;
+        }
+        if (name != null) {
+          result[locale] = name;
+          break;
+        }
+      }
+    }
+    return result;
   }
 
   /// Every image path referenced anywhere.

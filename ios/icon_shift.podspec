@@ -4,7 +4,7 @@
 #
 Pod::Spec.new do |s|
   s.name             = 'icon_shift'
-  s.version          = '0.1.0'
+  s.version          = '0.2.0'
   s.summary          = 'Runtime app icon and display name switching for Flutter.'
   s.description      = <<-DESC
 Switches the app icon (and, where the OS allows, the display name) at runtime.

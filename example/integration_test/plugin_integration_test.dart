@@ -130,6 +130,43 @@ void main() {
     expect(batch.isComplete, caps.displayName.acceptsArbitraryValues);
   });
 
+  testWidgets('application info comes from the OS', (_) async {
+    final info = await IconShift.getApplicationInfo();
+    debugPrint('$info');
+    switch (platform) {
+      case IconShiftPlatform.android:
+        expect(info.applicationId, 'com.example.icon_shift_example');
+        expect(info.version, isNotNull);
+        expect(info.currentIconVariant, 'default');
+      case IconShiftPlatform.ios || IconShiftPlatform.macos:
+        expect(info.applicationId, 'com.example.iconShiftExample');
+        expect(info.version, isNotNull);
+      case IconShiftPlatform.web:
+        expect(info.applicationId, startsWith('http'));
+        expect(info.installationType, InstallationType.browser);
+      case IconShiftPlatform.windows || IconShiftPlatform.linux:
+        expect(info.executableName, isNotNull);
+      case null:
+        break;
+    }
+  });
+
+  testWidgets('platform capabilities and previews are consistent', (_) async {
+    final caps = await IconShift.getPlatformCapabilities();
+    expect(caps.platform, platform);
+    expect(caps.buildTimeOnly, contains(IdentityProperty.applicationId));
+    expect(
+      caps.runtimeChangeable,
+      isNot(contains(IdentityProperty.applicationId)),
+    );
+    final preview = await IconShift.previewIdentity('dark');
+    debugPrint('$preview');
+    expect(preview.current!.displayName, isNotNull);
+    if (platform == IconShiftPlatform.ios) {
+      expect(preview.warnings.map((w) => w.code), contains('name_not_applied'));
+    }
+  });
+
   testWidgets('diagnostics are produced', (_) async {
     final report = (await IconShift.getDiagnostics()).toReport();
     debugPrint(report);

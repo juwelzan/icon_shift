@@ -1,0 +1,119 @@
+# Runtime identity
+
+Everything on this page happens inside the installed app, through APIs the
+OS provides. What each platform allows is in
+[PLATFORM_CAPABILITIES.md](../PLATFORM_CAPABILITIES.md).
+
+## Configuration
+
+```dart
+const config = IconShiftConfig(
+  defaultIdentity: AppIdentity(
+    name: 'Notes',
+    localizedNames: {'de': 'Notizen'},
+    icon: AppIcon.asset('assets/icons/app.png'),
+    platforms: {
+      IconShiftPlatform.android: IdentityOverride(icon: AppIcon.asset('assets/icons/android.png')),
+      IconShiftPlatform.web: IdentityOverride(icon: AppIcon.asset('assets/icons/favicon.png')),
+    },
+  ),
+  variants: {
+    'dark': AppIdentity(
+      name: 'Notes Dark',
+      icon: AppIcon.asset('assets/icons/dark.png'),
+      appearance: IdentityAppearance.dark,
+      themeColor: 0xFF121212,
+    ),
+    'business': AppIdentity(name: 'Notes for Work'),          // name only
+    'blue': AppIdentity(icon: AppIcon.asset('assets/icons/blue.png')), // icon only
+  },
+  renamedVariants: {'night': 'dark'},   // ids used by older app versions
+);
+```
+
+* **Variants are profiles.** Each bundles a name, localized names, an icon,
+  appearance/theme metadata and platform overrides; `setIdentity` switches
+  all of it in one call.
+* **Inheritance.** Unset fields inherit (see the resolution rules in
+  [architecture.md](architecture.md#resolution)).
+* **Ids** match `[a-z][a-z0-9_]*`; `default` is reserved.
+
+## Operations
+
+```dart
+await IconShift.initialize(config);              // validates, restores session-only state
+final r = await IconShift.setIdentity('dark');   // icon + name (+ web theme color)
+await IconShift.setIcon('blue');                 // icon only (Android: alias label too)
+await IconShift.setDisplayName('Anything');      // desktop window title / web title
+await IconShift.setCustomIdentity(iconVariant: 'blue', displayName: 'Blue Notes');
+await IconShift.restoreDefault();                // shipped identity, clears saved selection
+await IconShift.clearSavedSelection();           // forget, but leave the OS as it is
+```
+
+Every mutation returns an `IconShiftResult`:
+
+```dart
+if (r.isComplete) { /* everything requested is in effect */ }
+if (r.isPartial)  { /* some changed, some unsupported/failed */ }
+for (final o in [r.icon, r.displayName]) {
+  print('${o.status} ${o.errorCode} ${o.message} ${o.suggestion}');
+}
+r.throwIfFailed(); // exception style
+```
+
+Ordering: arguments are validated first; the icon is applied first; if it
+**fails**, the name is `skipped` so icon and name never come from different
+variants.
+
+## Queries
+
+| Call | Returns |
+| --- | --- |
+| `getCapabilities()` | Live runtime capabilities per operation (scope, persistence, preconfigured, arbitrary values, limitation). |
+| `getPlatformCapabilities()` | The above plus every `IdentityProperty` (runtime / build-time only / unsupported, reinstall, signing, data kept), required configuration and permissions. |
+| `getCurrentIdentity()` | Requested vs. OS-reported icon and name, pending state, in-sync flags. |
+| `getVariants()` | All variants resolved for this platform, preview asset, availability, current. |
+| `previewIdentity(id)` | What `setIdentity(id)` would do here and on every platform, with warnings — nothing is applied. |
+| `getApplicationInfo()` | Display name, application/bundle id, version, build, executable, installation type, current icon. Fields the OS does not expose are `null`. |
+| `validateConfiguration()` | Config checks, bundled assets, native resources. |
+| `getDiagnostics()` | Everything above as one report; contains no user data. |
+
+## Display name vs. other names
+
+IconShift keeps these apart:
+
+| Property | Example | Runtime? |
+| --- | --- | --- |
+| Display name (launcher) | "Notes" under the icon | Android (preconfigured) only |
+| Window / document title | macOS window title, browser tab | desktop, web |
+| Executable file name | `notes.exe` | never (build time) |
+| Application id / package / bundle id | `com.acme.notes` | never (build time; new app) |
+| Shortcut name | Start-menu entry | never (installer-owned) |
+
+## Persistence and recovery
+
+The selection is persisted natively. On `initialize()`:
+
+* unknown keys and invalid names are dropped,
+* ids in `renamedVariants` are migrated, removed ids forgotten,
+* on macOS, Windows, Linux and web the selection is re-applied (these
+  changes end with the process); pass `restoreSelection: false` to skip,
+* on Android the plugin also repairs the launcher entry at startup if the
+  enabled alias was retired or none is enabled.
+
+## Theme-aware identities
+
+```dart
+final sync = IconShiftThemeSync()..start(); // dark ↔ default by system brightness
+```
+
+Opt-in, because operating systems do not switch launcher icons with the
+Flutter theme. iOS is excluded by default (each change shows an alert — use
+dark/tinted asset appearances there, which iOS applies itself); Android is
+debounced.
+
+## Web notes
+
+`MaterialApp(title:)` writes `document.title` whenever it rebuilds. Set it
+from `getCurrentIdentity().nativeDisplayName` (see the example app) so it does
+not undo `setDisplayName`.

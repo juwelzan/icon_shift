@@ -3,7 +3,7 @@ description: >-
   Switch your app's icon and display name at runtime on Android, iOS, macOS,
   Windows, Linux and web, with shared and per-platform configuration and
   honest capability reporting.
-version: 0.1.0
+version: 0.2.0
 # TODO(publisher): set repository/homepage before publishing.
 # repository: https://github.com/<owner>/icon_shift
 topics:

@@ -1,0 +1,12 @@
+{
+  "id": "20261102_232720",
+  "label": "generate",
+  "created": "2026-11-02T23:27:20.937480",
+  "files": [
+    {
+      "path": "android/app/src/main/res/values-de/icon_shift.xml",
+      "existedBefore": true,
+      "deleted": false
+    }
+  ]
+}

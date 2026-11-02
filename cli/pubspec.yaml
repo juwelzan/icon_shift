@@ -1,9 +1,9 @@
 name: icon_shift_cli
 description: >-
-  Build-time generator for icon_shift: creates Android activity-alias icons
-  and labels, iOS alternate app icon sets and a Dart IconShiftConfig from one
-  icon_shift.yaml.
-version: 0.1.0
+  Build-time tooling for the icon_shift plugin: native icon resources,
+  application ids and names, PWA metadata, validation, preview, backups and
+  rollback, from one icon_shift.yaml.
+version: 0.2.0
 # TODO(publisher): set repository before publishing.
 
 environment:

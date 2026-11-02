@@ -134,7 +134,8 @@ class InvalidConfigurationException extends IconShiftException {
         'Invalid IconShift configuration:\n'
         '${validation.errors.map((e) => '  - $e').join('\n')}',
         operation: IconShiftOperation.initialize,
-        suggestion: 'Fix the listed errors; IconShift.validateConfiguration() '
+        suggestion:
+            'Fix the listed errors; IconShift.validateConfiguration() '
             'and `icon_shift_cli validate` report the same checks.',
       );
 

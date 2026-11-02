@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:js_interop';
 import 'dart:ui_web' as ui_web;
 
 import 'package:flutter/services.dart';
@@ -6,6 +7,7 @@ import 'package:flutter_web_plugins/flutter_web_plugins.dart';
 import 'package:web/web.dart' as web;
 
 import 'src/config/platform.dart';
+import 'src/models/application_info.dart';
 import 'src/models/capabilities.dart';
 import 'src/models/validation.dart';
 import 'src/platform/icon_shift_platform_interface.dart';
@@ -39,6 +41,10 @@ class IconShiftWeb extends IconShiftPlatformInterface {
   List<web.Element>? _originalIcons;
   String? _originalTitle;
 
+  /// `<meta name="theme-color">` content before the first change; `''` when
+  /// the page had none.
+  String? _originalThemeColor;
+
   web.Storage? get _localStorage {
     try {
       return _storageOverride ?? web.window.localStorage;
@@ -68,7 +74,11 @@ class IconShiftWeb extends IconShiftPlatformInterface {
               'from manifest.json. MaterialApp.title also writes '
               'document.title when it rebuilds.',
         ),
-        notes: ['Safari may not update a favicon changed after page load.'],
+        notes: [
+          'Safari may not update a favicon changed after page load.',
+          'Theme colors (AppIdentity.themeColor) are applied to '
+              '<meta name="theme-color">.',
+        ],
       );
 
   @override
@@ -134,6 +144,76 @@ class IconShiftWeb extends IconShiftPlatformInterface {
     }
     _document.title = target;
     return const NativeOperationResult('applied');
+  }
+
+  @override
+  Future<NativeOperationResult> setThemeColor(int? argb) async {
+    final head = _document.head;
+    if (head == null) {
+      throw PlatformException(
+        code: NativeErrorCodes.nativeFailure,
+        message: 'The document has no <head> element.',
+      );
+    }
+    var meta =
+        _document.querySelector('meta[name="theme-color"]')
+            as web.HTMLMetaElement?;
+    _originalThemeColor ??= meta?.content ?? '';
+    final target = argb == null
+        ? _originalThemeColor!
+        : '#${(argb & 0xFFFFFF).toRadixString(16).padLeft(6, '0').toUpperCase()}';
+    if ((meta?.content ?? '') == target) {
+      return const NativeOperationResult('unchanged');
+    }
+    if (target.isEmpty) {
+      meta?.remove();
+      return const NativeOperationResult('applied');
+    }
+    if (meta == null) {
+      meta = _document.createElement('meta') as web.HTMLMetaElement
+        ..name = 'theme-color';
+      head.append(meta);
+    }
+    meta.content = target;
+    return const NativeOperationResult('applied');
+  }
+
+  @override
+  Future<ApplicationInfo> getApplicationInfo() async {
+    final standalone = web.window
+        .matchMedia('(display-mode: standalone)')
+        .matches;
+    var version = const <String, String>{};
+    try {
+      // Flutter writes version.json next to index.html.
+      final response = await web.window
+          .fetch('version.json'.toJS, web.RequestInit(cache: 'no-store'))
+          .toDart;
+      if (response.ok) {
+        final json =
+            jsonDecode((await response.text().toDart).toDart)
+                as Map<String, Object?>;
+        version = {
+          if (json['version'] case final String v) 'version': v,
+          if (json['build_number'] case final String b) 'buildNumber': b,
+          if (json['app_name'] case final String n) 'appName': n,
+        };
+      }
+    } on Object {
+      // Not served (e.g. tests): version stays unknown.
+    }
+    return ApplicationInfo(
+      platform: IconShiftPlatform.web,
+      displayName: version['appName'],
+      applicationId: web.window.location.origin,
+      version: version['version'],
+      buildNumber: version['buildNumber'],
+      windowTitle: _document.title,
+      installationType: standalone
+          ? InstallationType.installedPwa
+          : InstallationType.browser,
+      osVersion: web.window.navigator.userAgent,
+    );
   }
 
   @override

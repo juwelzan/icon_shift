@@ -9,6 +9,8 @@ final RegExp variantIdPattern = RegExp(r'^[a-z][a-z0-9_]{0,49}$');
 
 const int maxDisplayNameLength = 255;
 
+final RegExp _localePattern = RegExp(r'^[a-z]{2,3}(?:[-_][A-Za-z0-9]{2,8})*$');
+
 /// Launchers commonly truncate labels longer than this.
 const int _longNameHint = 30;
 
@@ -117,8 +119,28 @@ IconShiftValidationResult validateConfig(IconShiftConfig config) {
     }
   }
 
+  void checkNames(
+    Map<String, String> names,
+    String variantId,
+    IconShiftPlatform? platform,
+  ) {
+    names.forEach((locale, name) {
+      if (!_localePattern.hasMatch(locale)) {
+        add(
+          ValidationSeverity.error,
+          'invalid_locale',
+          'localizedNames key "$locale" is not a locale like "de" or "pt_BR".',
+          variantId: variantId,
+          platform: platform,
+        );
+      }
+      checkName(name, variantId, platform);
+    });
+  }
+
   void checkIdentity(String variantId, AppIdentity identity) {
     checkName(identity.name, variantId, null);
+    checkNames(identity.localizedNames, variantId, null);
     checkIcon(identity.icon, variantId, null);
     identity.platforms.forEach((platform, override) {
       if (override.isEmpty) {
@@ -132,6 +154,7 @@ IconShiftValidationResult validateConfig(IconShiftConfig config) {
         );
       }
       checkName(override.name, variantId, platform);
+      checkNames(override.localizedNames, variantId, platform);
       checkIcon(override.icon, variantId, platform);
       if (platform == IconShiftPlatform.ios && override.name != null) {
         add(
@@ -200,6 +223,33 @@ IconShiftValidationResult validateConfig(IconShiftConfig config) {
       );
     }
   }
+
+  config.renamedVariants.forEach((from, to) {
+    if (config.hasVariant(from)) {
+      add(
+        ValidationSeverity.error,
+        'renamed_variant_still_configured',
+        'renamedVariants maps "$from", which is still a configured variant.',
+        variantId: from,
+      );
+    } else if (!variantIdPattern.hasMatch(from)) {
+      add(
+        ValidationSeverity.error,
+        'invalid_variant_id',
+        'renamedVariants key "$from" must match ${variantIdPattern.pattern}.',
+        variantId: from,
+      );
+    }
+    if (config.migrateVariantId(from) == null) {
+      add(
+        ValidationSeverity.error,
+        'invalid_renamed_variant',
+        'renamedVariants["$from"] = "$to" does not lead to a configured '
+            'variant (missing target or a cycle).',
+        variantId: from,
+      );
+    }
+  });
 
   // Formats a runtime desktop icon cannot be decoded from.
   for (final id in config.variantIds) {

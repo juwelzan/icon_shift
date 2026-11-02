@@ -36,6 +36,17 @@ public class IconShiftPlugin: NSObject, FlutterPlugin {
         details: nil))
     case "inspect":
       result(inspect(variants: args["variants"] as? [[String: Any]] ?? []))
+    case "getApplicationInfo":
+      let info = Bundle.main.infoDictionary ?? [:]
+      result([
+        "displayName": Self.bundleDisplayName,
+        "applicationId": Bundle.main.bundleIdentifier,
+        "version": info["CFBundleShortVersionString"] as? String,
+        "buildNumber": info["CFBundleVersion"] as? String,
+        "executableName": info["CFBundleExecutable"] as? String,
+        "installationType": "standard",
+        "osVersion": "\(UIDevice.current.systemName) \(UIDevice.current.systemVersion)",
+      ] as [String: Any?])
     case "loadSelection":
       result(UserDefaults.standard.dictionary(forKey: Self.selectionKey) as? [String: String] ?? [:])
     case "saveSelection":

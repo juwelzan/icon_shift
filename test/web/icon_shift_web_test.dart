@@ -11,7 +11,8 @@ import 'package:web/web.dart' as web;
 List<web.HTMLLinkElement> iconLinks() {
   final nodes = web.document.querySelectorAll('link[rel~="icon"]');
   return [
-    for (var i = 0; i < nodes.length; i++) nodes.item(i)! as web.HTMLLinkElement,
+    for (var i = 0; i < nodes.length; i++)
+      nodes.item(i)! as web.HTMLLinkElement,
   ];
 }
 
@@ -90,8 +91,13 @@ void main() {
     expect((await platform.setIcon(request)).status, 'unchanged');
     await expectLater(
       platform.setIcon(const NativeIconRequest(key: 'blue')),
-      throwsA(isA<PlatformException>()
-          .having((e) => e.code, 'code', NativeErrorCodes.invalidArgument)),
+      throwsA(
+        isA<PlatformException>().having(
+          (e) => e.code,
+          'code',
+          NativeErrorCodes.invalidArgument,
+        ),
+      ),
     );
   });
 
@@ -120,6 +126,38 @@ void main() {
     final inspection = await platform.inspect(const []);
     expect(inspection.info['faviconLinks'], 1);
     expect(inspection.info['displayModeStandalone'], isFalse);
+  });
+
+  test('theme color: set, unchanged, restore (page without meta)', () async {
+    web.document.querySelector('meta[name="theme-color"]')?.remove();
+    expect((await platform.setThemeColor(0xFF0D47A1)).status, 'applied');
+    final meta =
+        web.document.querySelector('meta[name="theme-color"]')!
+            as web.HTMLMetaElement;
+    expect(meta.content, '#0D47A1');
+    expect((await platform.setThemeColor(0xFF0D47A1)).status, 'unchanged');
+    await platform.setThemeColor(null);
+    expect(web.document.querySelector('meta[name="theme-color"]'), isNull);
+  });
+
+  test('theme color restores an existing meta value', () async {
+    final meta = (web.document.createElement('meta') as web.HTMLMetaElement)
+      ..name = 'theme-color'
+      ..content = '#123456';
+    web.document.head!.append(meta);
+    await platform.setThemeColor(0xFFFFFFFF);
+    expect(meta.content, '#FFFFFF');
+    await platform.setThemeColor(null);
+    expect(meta.content, '#123456');
+    meta.remove();
+  });
+
+  test('application info reports the origin and browser mode', () async {
+    final info = await platform.getApplicationInfo();
+    expect(info.platform, IconShiftPlatform.web);
+    expect(info.applicationId, web.window.location.origin);
+    expect(info.installationType, InstallationType.browser);
+    expect(info.windowTitle, 'Original');
   });
 
   test('end to end through the engine', () async {

@@ -1,27 +1,47 @@
 # Single source of truth for IconShift in this app.
-# Regenerate native resources and lib/icon_shift_config.g.dart with:
-#   dart run icon_shift_cli generate
+#
+#   dart run ../cli/bin/icon_shift_cli.dart generate      # native resources + Dart config
+#   dart run ../cli/bin/icon_shift_cli.dart preview       # how each variant resolves
+#   dart run ../cli/bin/icon_shift_cli.dart identity --apply --profile staging -n
+
 default:
   name: IconShift Demo
-  icon: assets/icons/default.png          # one icon shared by every platform…
+  names: { de: IconShift Demo DE }
+  icon: assets/icons/default.png             # one icon shared by every platform…
   platforms:
     android:
-      icon: assets/icons/default_android.png   # …except Android, which overrides it
-      name: IconShift Android                  # …and its launcher label
+      icon: assets/icons/default_android.png # …except Android, which overrides it
+      name: IconShift Android                # …and its launcher label
+      names: { de: IconShift Android DE }
     web:
-      icon: assets/icons/favicon.png           # small favicon for browser tabs
+      icon: assets/icons/favicon.png         # small favicon for browser tabs
 
 variants:
-  dark:
+  dark:                                      # icon + name + theme metadata
     name: IconShift Dark
+    names: { de: IconShift Dunkel }
     icon: assets/icons/dark.png
+    appearance: dark
+    theme_color: "#212121"
     platforms:
       web:
         icon: assets/icons/dark_favicon.png
-  blue:                                    # icon only: keeps the default name
+  blue:                                      # icon only: keeps the default name
     icon: assets/icons/blue.png
-  pro:                                     # name only: keeps the default icon
+  pro:                                       # name only: keeps the default icon
     name: IconShift Pro
 
 dart:
   output: lib/icon_shift_config.g.dart
+
+# Build-time identity (never applied to an installed app).
+application:
+  display_name: IconShift Demo
+build_profiles:
+  staging:
+    display_name: IconShift Staging
+    android: { application_id: com.example.icon_shift_example.staging }
+    ios: { bundle_id: com.example.iconShiftExample.staging }
+    macos: { bundle_id: com.example.iconShiftExample.staging }
+    linux: { application_id: com.example.icon_shift.staging }
+    web: { short_name: IS Staging }

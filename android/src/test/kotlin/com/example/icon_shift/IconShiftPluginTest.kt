@@ -62,4 +62,34 @@ internal class AliasSwitchPlannerTest {
         assertNull(AliasSwitchPlanner.activeVariant(listOf(default, dark.copy(enabled = true))))
         assertNull(AliasSwitchPlanner.activeVariant(listOf(default.copy(enabled = false))))
     }
+
+    @Test
+    fun recoveryMovesRetiredAndMissingEntries() {
+        val retired = AliasState(".IconShiftAlias_night", "night", enabled = true, retiredTo = "dark")
+        // Retired alias enabled → its replacement.
+        assertEquals("dark", AliasSwitchPlanner.recoveryTarget(listOf(default.copy(enabled = false), dark, retired)))
+        // Replacement missing too → default.
+        assertEquals(
+            "default",
+            AliasSwitchPlanner.recoveryTarget(listOf(default.copy(enabled = false), retired.copy(retiredTo = "gone"))),
+        )
+        // No enabled alias → default.
+        assertEquals("default", AliasSwitchPlanner.recoveryTarget(listOf(default.copy(enabled = false), dark)))
+        // Healthy or ambiguous → nothing.
+        assertNull(AliasSwitchPlanner.recoveryTarget(listOf(default, dark)))
+        assertNull(AliasSwitchPlanner.recoveryTarget(listOf(default, dark.copy(enabled = true))))
+        assertNull(AliasSwitchPlanner.recoveryTarget(emptyList()))
+    }
+
+    @Test
+    fun recoveryPlanEnablesTargetBeforeDisablingRetired() {
+        val retired = AliasState(".IconShiftAlias_night", "night", enabled = true, retiredTo = "dark")
+        val states = listOf(default.copy(enabled = false), dark, retired)
+        assertEquals(
+            SwitchPlan.Apply(
+                listOf(SwitchStep(".IconShiftAlias_dark", enable = true), SwitchStep(".IconShiftAlias_night", enable = false)),
+            ),
+            AliasSwitchPlanner.plan(states, AliasSwitchPlanner.recoveryTarget(states)!!),
+        )
+    }
 }

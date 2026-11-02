@@ -1,7 +1,9 @@
 package com.example.icon_shift
 
 import android.content.Context
+import android.content.pm.PackageManager
 import android.os.Build
+import android.util.Log
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
@@ -25,6 +27,26 @@ class IconShiftPlugin : FlutterPlugin, MethodCallHandler {
         registry = AliasRegistry(context)
         channel = MethodChannel(binding.binaryMessenger, "icon_shift")
         channel.setMethodCallHandler(this)
+        recoverLauncherEntry()
+    }
+
+    /**
+     * Keeps the app launchable after updates: if the enabled alias belongs to
+     * a retired variant, or no alias is enabled at all, switch to the
+     * replacement (or the default) alias.
+     */
+    private fun recoverLauncherEntry() {
+        try {
+            val states = registry.states(registry.aliases())
+            val target = AliasSwitchPlanner.recoveryTarget(states, DEFAULT_ID) ?: return
+            val plan = AliasSwitchPlanner.plan(states, target)
+            if (plan is SwitchPlan.Apply) {
+                registry.apply(plan.steps)
+                Log.i(TAG, "Recovered the launcher entry: switched to \"$target\".")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Launcher entry recovery failed", e)
+        }
     }
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
@@ -44,6 +66,7 @@ class IconShiftPlugin : FlutterPlugin, MethodCallHandler {
                     null,
                 )
                 "inspect" -> result.success(inspect(call.argument<List<Map<String, Any?>>>("variants").orEmpty()))
+                "getApplicationInfo" -> result.success(applicationInfo())
                 "loadSelection" -> result.success(SelectionStore(context).load())
                 "saveSelection" -> {
                     SelectionStore(context).save(call.argument<Map<String, String>>("selection").orEmpty())
@@ -60,7 +83,7 @@ class IconShiftPlugin : FlutterPlugin, MethodCallHandler {
 
     private fun capabilities(): Map<String, Any?> {
         val aliases = registry.aliases()
-        val ready = aliases.any { it.variantId == DEFAULT_ID }
+        val ready = aliases.any { it.variantId == DEFAULT_ID && it.retiredTo == null }
         val limitation = when {
             aliases.isEmpty() -> "No <activity-alias> with meta-data \"icon_shift.variant\" found in " +
                 "AndroidManifest.xml. Run icon_shift_generator or add aliases by hand (see README)."
@@ -171,7 +194,7 @@ class IconShiftPlugin : FlutterPlugin, MethodCallHandler {
                 }
             }
         }
-        aliases.filter { it.variantId !in configured }.forEach {
+        aliases.filter { it.variantId !in configured && it.retiredTo == null }.forEach {
             issue(
                 "warning", "unconfigured_alias",
                 "Activity-alias ${it.component.shortClassName} declares variant \"${it.variantId}\", " +
@@ -212,8 +235,34 @@ class IconShiftPlugin : FlutterPlugin, MethodCallHandler {
         )
     }
 
+    private fun applicationInfo(): Map<String, Any?> {
+        val pm = context.packageManager
+        @Suppress("DEPRECATION")
+        val info = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            pm.getPackageInfo(context.packageName, PackageManager.PackageInfoFlags.of(0))
+        } else {
+            pm.getPackageInfo(context.packageName, 0)
+        }
+        val buildNumber = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            info.longVersionCode
+        } else {
+            @Suppress("DEPRECATION")
+            info.versionCode.toLong()
+        }
+        val state = nativeState()
+        return mapOf(
+            "displayName" to (state["displayName"] as String? ?: context.applicationInfo.loadLabel(pm).toString()),
+            "applicationId" to context.packageName,
+            "version" to info.versionName,
+            "buildNumber" to buildNumber.toString(),
+            "installationType" to "standard",
+            "osVersion" to "Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})",
+        )
+    }
+
     private companion object {
         const val DEFAULT_ID = "default"
+        const val TAG = "IconShift"
     }
 }
 

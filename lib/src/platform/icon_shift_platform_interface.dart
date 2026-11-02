@@ -1,6 +1,8 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
+import '../models/application_info.dart';
 import '../models/capabilities.dart';
 import '../models/validation.dart';
 import 'method_channel_icon_shift.dart';
@@ -147,4 +149,19 @@ abstract class IconShiftPlatformInterface extends PlatformInterface {
   Future<Map<String, String>> loadSelection();
 
   Future<void> saveSelection(Map<String, String> selection);
+
+  /// Identity metadata the OS exposes about the running app.
+  ///
+  /// Implementations that predate this method report nothing rather than
+  /// guessing.
+  Future<ApplicationInfo> getApplicationInfo() async =>
+      const ApplicationInfo(platform: null);
+
+  /// Sets the theme color (web: `<meta name="theme-color">`), or restores
+  /// the original when [argb] is `null`. Unsupported by default.
+  Future<NativeOperationResult> setThemeColor(int? argb) async =>
+      throw PlatformException(
+        code: NativeErrorCodes.unsupported,
+        message: 'This platform has no runtime theme color.',
+      );
 }

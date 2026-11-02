@@ -62,6 +62,8 @@ class _DemoPageState extends State<DemoPage> {
   List<IdentityVariant> _variants = const [];
   IconShiftValidationResult? _validation;
   IconShiftDiagnostics? _diagnostics;
+  ApplicationInfo? _info;
+  PlatformCapabilities? _platformCapabilities;
   IconShiftResult? _lastResult;
   String? _batchIcon;
   bool _busy = false;
@@ -85,6 +87,8 @@ class _DemoPageState extends State<DemoPage> {
     final variants = await IconShift.getVariants();
     final validation = await IconShift.validateConfiguration();
     final diagnostics = await IconShift.getDiagnostics();
+    final info = await IconShift.getApplicationInfo();
+    final platformCapabilities = await IconShift.getPlatformCapabilities();
     if (!mounted) return;
     setState(() {
       _capabilities = capabilities;
@@ -92,6 +96,8 @@ class _DemoPageState extends State<DemoPage> {
       _variants = variants;
       _validation = validation;
       _diagnostics = diagnostics;
+      _info = info;
+      _platformCapabilities = platformCapabilities;
     });
     final native = state.nativeDisplayName;
     if (native != null &&
@@ -149,6 +155,8 @@ class _DemoPageState extends State<DemoPage> {
                 padding: const EdgeInsets.all(16),
                 children: [
                   _capabilitiesCard(caps),
+                  _applicationInfoCard(),
+                  _propertiesCard(),
                   _stateCard(),
                   _variantsCard(caps),
                   _customCard(caps),
@@ -253,6 +261,12 @@ class _DemoPageState extends State<DemoPage> {
         trailing: Wrap(
           spacing: 4,
           children: [
+            IconButton(
+              key: ValueKey('preview-${v.id}'),
+              tooltip: 'Preview',
+              icon: const Icon(Icons.visibility),
+              onPressed: () => _showPreview(v.id),
+            ),
             IconButton(
               key: ValueKey('identity-${v.id}'),
               tooltip: 'Apply icon and name',
@@ -360,6 +374,62 @@ class _DemoPageState extends State<DemoPage> {
           ),
         ),
     ]);
+  }
+
+  Widget _applicationInfoCard() {
+    final i = _info;
+    if (i == null) return const SizedBox.shrink();
+    return _section('Application info (from the OS)', [
+      Text('Display name: ${i.displayName ?? '(not exposed)'}'),
+      Text('Application id: ${i.applicationId ?? '(not exposed)'}'),
+      Text('Version: ${i.version ?? '?'}+${i.buildNumber ?? '?'}'),
+      if (i.executableName != null) Text('Executable: ${i.executableName}'),
+      Text('Installed as: ${i.installationType.name}'),
+      Text('Current icon: ${i.currentIconVariant ?? 'unknown'}'),
+    ]);
+  }
+
+  Widget _propertiesCard() {
+    final c = _platformCapabilities;
+    if (c == null) return const SizedBox.shrink();
+    String names(List<IdentityProperty> p) =>
+        p.isEmpty ? '—' : p.map((e) => e.name).join(', ');
+    return _section('Identity properties on ${c.platform?.name ?? '?'}', [
+      Text('Runtime: ${names(c.runtimeChangeable)}'),
+      Text('Build time only: ${names(c.buildTimeOnly)}'),
+      Text('Needs a new install: ${names(c.requiringReinstall)}'),
+      for (final line in c.requiredConfiguration) Text('Setup: $line'),
+    ]);
+  }
+
+  Future<void> _showPreview(String id) async {
+    final preview = await IconShift.previewIdentity(id);
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Preview "$id"'),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (final MapEntry(:key, :value) in preview.platforms.entries)
+                Text(
+                  '${key.name}${key == preview.currentPlatform ? ' (this device)' : ''}: $value',
+                ),
+              for (final w in preview.warnings)
+                Text('${w.severity.name}: ${w.message}'),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _diagnosticsCard() => _section('Diagnostics', [

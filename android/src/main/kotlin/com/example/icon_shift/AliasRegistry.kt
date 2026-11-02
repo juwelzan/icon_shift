@@ -12,12 +12,15 @@ data class AliasInfo(
     val variantId: String,
     val label: String,
     val enabledInManifest: Boolean,
+    /** Set for variants removed in an update: the variant that replaces it. */
+    val retiredTo: String? = null,
 )
 
 /** Reads and changes the app's IconShift activity-aliases. */
 class AliasRegistry(private val context: Context) {
     companion object {
         const val META_VARIANT = "icon_shift.variant"
+        const val META_RETIRED_TO = "icon_shift.retired_to"
     }
 
     private val pm: PackageManager get() = context.packageManager
@@ -41,6 +44,7 @@ class AliasRegistry(private val context: Context) {
                 variantId = variantId,
                 label = activity.loadLabel(pm).toString(),
                 enabledInManifest = activity.enabled,
+                retiredTo = activity.metaData?.getString(META_RETIRED_TO),
             )
         }
     }
@@ -53,7 +57,7 @@ class AliasRegistry(private val context: Context) {
         }
 
     fun states(aliases: List<AliasInfo>): List<AliasState> =
-        aliases.map { AliasState(it.component.className, it.variantId, isEnabled(it)) }
+        aliases.map { AliasState(it.component.className, it.variantId, isEnabled(it), it.retiredTo) }
 
     /**
      * Applies [steps] with DONT_KILL_APP. On Android 13+ all changes are sent

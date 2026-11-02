@@ -5,9 +5,12 @@ import 'config/app_identity.dart';
 import 'config/icon_shift_config.dart';
 import 'config/platform.dart';
 import 'exceptions.dart';
+import 'models/application_info.dart';
 import 'models/capabilities.dart';
 import 'models/diagnostics.dart';
+import 'models/identity_properties.dart';
 import 'models/identity_variant.dart';
+import 'models/preview.dart';
 import 'models/result.dart';
 import 'models/state.dart';
 import 'models/validation.dart';
@@ -30,7 +33,12 @@ class IconShiftEngine {
     required this.platform,
     required this.targetPlatform,
     AssetBundle? assetBundle,
+    this.locale,
   }) : _assets = assetBundle ?? rootBundle;
+
+  /// Locale for [AppIdentity.localizedNames] (`de`, `pt_BR`), or `null` for
+  /// the unlocalized names.
+  final String? locale;
 
   final IconShiftPlatformInterface platform;
 
@@ -51,6 +59,9 @@ class IconShiftEngine {
 
   bool get isInitialized => _config != null;
 
+  ResolvedIdentity _resolve(String variantId) =>
+      config.resolve(variantId, targetPlatform, locale: locale);
+
   IconShiftConfig get config =>
       _config ?? (throw const NotInitializedException());
 
@@ -67,7 +78,7 @@ class IconShiftEngine {
     _capabilities = await _loadCapabilities();
     _selection = await _loadSelection();
     _config = config;
-    await _dropStaleSelection();
+    await _recoverSelection();
 
     if (restoreSelection) _restoreResult = await _serialize(_restore);
 
@@ -86,7 +97,9 @@ class IconShiftEngine {
 
   Future<IconShiftResult> setIdentity(String variantId) {
     _requireVariant(variantId);
-    return _serialize(() => _setIdentity(variantId));
+    return _serialize(
+      () => _setIdentity(variantId, IconShiftOperation.setIdentity),
+    );
   }
 
   Future<IconShiftResult> setIcon(String variantId) {
@@ -99,9 +112,10 @@ class IconShiftEngine {
         _Keys.identity: null,
         _Keys.icon: _storedIconKey(variantId),
       });
-      return IconShiftResult(
-        icon: icon.outcome,
-        displayName: const OperationOutcome.notRequested(),
+      return _result(
+        IconShiftOperation.setIcon,
+        icon.outcome,
+        const OperationOutcome.notRequested(),
       );
     });
   }
@@ -112,9 +126,10 @@ class IconShiftEngine {
     return _serialize(() async {
       final outcome = await _applyName(name);
       await _commit(outcome, {_Keys.identity: null, _Keys.name: name});
-      return IconShiftResult(
-        icon: const OperationOutcome.notRequested(),
-        displayName: outcome,
+      return _result(
+        IconShiftOperation.setDisplayName,
+        const OperationOutcome.notRequested(),
+        outcome,
       );
     });
   }
@@ -157,14 +172,17 @@ class IconShiftEngine {
         name = await _applyName(displayName);
         await _commit(name, {_Keys.identity: null, _Keys.name: displayName});
       }
-      return IconShiftResult(icon: icon, displayName: name);
+      return _result(IconShiftOperation.setCustomIdentity, icon, name);
     });
   }
 
   Future<IconShiftResult> restoreDefault() {
     _requireInitialized();
     return _serialize(() async {
-      final result = await _setIdentity(_defaultId);
+      final result = await _setIdentity(
+        _defaultId,
+        IconShiftOperation.restoreDefault,
+      );
       if (result.isComplete) await _saveSelection({});
       return result;
     });
@@ -232,11 +250,101 @@ class IconShiftEngine {
     );
   }
 
+  Future<PlatformCapabilities> getPlatformCapabilities() async {
+    _requireInitialized();
+    return PlatformCapabilities(
+      platform: targetPlatform,
+      runtime: _capabilities,
+      properties: targetPlatform == null
+          ? const {}
+          : identityPropertiesFor(targetPlatform!),
+    );
+  }
+
+  Future<ApplicationInfo> getApplicationInfo() async {
+    _requireInitialized();
+    ApplicationInfo info;
+    try {
+      info = await platform.getApplicationInfo();
+    } on Object catch (e) {
+      debugPrint('IconShift: could not read application info: $e');
+      info = ApplicationInfo(platform: targetPlatform);
+    }
+    final state = await getCurrentIdentity();
+    return info.copyWith(currentIconVariant: state.nativeIconVariant);
+  }
+
+  /// What applying [variantId] would do here and on every platform.
+  Future<IdentityPreview> previewIdentity(String variantId) async {
+    _requireVariant(variantId);
+    final platforms = <IconShiftPlatform, PlatformIdentityPreview>{};
+    for (final p in IconShiftPlatform.values) {
+      final r = config.resolve(variantId, p, locale: locale);
+      final table = identityPropertiesFor(p);
+      platforms[p] = PlatformIdentityPreview(
+        displayName: r.name,
+        icon: r.icon,
+        usesDefaultName: r.usesDefaultName,
+        usesDefaultIcon: r.usesDefaultIcon,
+        nameAppliesAtRuntime:
+            table[IdentityProperty.displayName]!.isRuntimeChangeable ||
+            table[IdentityProperty.windowTitle]!.isRuntimeChangeable,
+        iconAppliesAtRuntime:
+            table[IdentityProperty.launcherIcon]!.isRuntimeChangeable ||
+            table[IdentityProperty.runningAppIcon]!.isRuntimeChangeable,
+      );
+    }
+
+    final warnings = <ValidationIssue>[
+      ...(await validateConfiguration()).issuesFor(variantId),
+    ];
+    void warn(String code, String message) => warnings.add(
+      ValidationIssue(
+        severity: ValidationSeverity.warning,
+        code: code,
+        message: message,
+        variantId: variantId,
+        platform: targetPlatform,
+      ),
+    );
+    if (targetPlatform != null) {
+      final r = _resolve(variantId);
+      if (!r.usesDefaultIcon && !_capabilities.icon.isSupported) {
+        warn(
+          'icon_not_applied',
+          'The icon will not change here: ${_capabilities.icon.limitation ?? 'unsupported'}',
+        );
+      }
+      if (!r.usesDefaultName && !_capabilities.displayName.isSupported) {
+        warn(
+          'name_not_applied',
+          'The name "${r.name}" will not be shown here: '
+              '${_capabilities.displayName.limitation ?? 'unsupported'}',
+        );
+      }
+    }
+    return IdentityPreview(
+      variantId: variantId,
+      platforms: platforms,
+      currentPlatform: targetPlatform,
+      warnings: List.unmodifiable(warnings),
+    );
+  }
+
+  /// Forgets the saved selection without changing what the OS shows.
+  Future<void> clearSavedSelection() async {
+    _requireInitialized();
+    await _serialize(() => _saveSelection({}));
+  }
+
   // ---------------------------------------------------------------------------
   // Internals
 
-  Future<IconShiftResult> _setIdentity(String variantId) async {
-    final resolved = config.resolve(variantId, targetPlatform);
+  Future<IconShiftResult> _setIdentity(
+    String variantId,
+    IconShiftOperation operation,
+  ) async {
+    final resolved = _resolve(variantId);
     final icon = await _applyIcon(variantId);
 
     final OperationOutcome name;
@@ -262,8 +370,9 @@ class IconShiftEngine {
       await _commit(const OperationOutcome.applied(), {
         _Keys.identity: variantId == _defaultId ? null : variantId,
       });
+      await _applyThemeColor(variantId);
     }
-    return IconShiftResult(icon: icon.outcome, displayName: name);
+    return _result(operation, icon.outcome, name);
   }
 
   Future<({OperationOutcome outcome, String? linkedName})> _applyIcon(
@@ -278,7 +387,7 @@ class IconShiftEngine {
         linkedName: null,
       );
     }
-    final resolved = config.resolve(variantId, targetPlatform);
+    final resolved = _resolve(variantId);
     final key = _nativeIconKey(variantId);
 
     Uint8List? bytes;
@@ -302,9 +411,8 @@ class IconShiftEngine {
       } on Object {
         return (
           outcome: OperationOutcome.failed(
-            IconShiftErrorCode.missingNativeResource,
-            'Could not load icon asset "${icon.assetKey}". Make sure it is '
-            'listed under flutter > assets in pubspec.yaml.',
+            IconShiftErrorCode.missingAsset,
+            'Could not load icon asset "${icon.assetKey}".',
           ),
           linkedName: null,
         );
@@ -331,10 +439,14 @@ class IconShiftEngine {
   Future<OperationOutcome> _applyName(String? name) async {
     final capability = _capabilities.displayName;
     if (!capability.isSupported) {
+      final buildTime = _property(IdentityProperty.displayName)?.buildTime;
       return OperationOutcome.unsupported(
         capability.limitation ??
             'Changing the display name is not supported on '
                 '${_platformName()}.',
+        code: buildTime == true
+            ? IconShiftErrorCode.buildRequired
+            : IconShiftErrorCode.unsupportedOperation,
       );
     }
     if (!capability.acceptsArbitraryValues) {
@@ -385,9 +497,7 @@ class IconShiftEngine {
     if (variantId == _defaultId) return defaultIconKey;
     // Android: every variant is its own activity-alias (icon + label).
     if (_capabilities.iconAndNameLinked) return variantId;
-    return config.resolve(variantId, targetPlatform).usesDefaultIcon
-        ? defaultIconKey
-        : variantId;
+    return _resolve(variantId).usesDefaultIcon ? defaultIconKey : variantId;
   }
 
   /// Value persisted as the requested icon: `null` for the shipped icon.
@@ -401,7 +511,7 @@ class IconShiftEngine {
     NativeInspection inspection,
     String currentKey,
   ) {
-    final resolved = config.resolve(id, targetPlatform);
+    final resolved = _resolve(id);
     final errors = inspection.issues.where(
       (i) => i.variantId == id && i.severity == ValidationSeverity.error,
     );
@@ -442,27 +552,118 @@ class IconShiftEngine {
       name = await _applyName(savedName);
     }
 
+    if (_selection[_Keys.identity] case final identity?) {
+      await _applyThemeColor(identity);
+    }
     if (icon.status == OperationStatus.notRequested &&
         name.status == OperationStatus.notRequested) {
       return null;
     }
-    final result = IconShiftResult(icon: icon, displayName: name);
+    final result = _result(IconShiftOperation.initialize, icon, name);
     if (!result.isComplete) {
       debugPrint('IconShift: re-applying the saved selection: $result');
     }
     return result;
   }
 
-  /// Forgets saved variants that are no longer configured.
-  Future<void> _dropStaleSelection() async {
-    final stale = [
-      for (final key in [_Keys.identity, _Keys.icon])
-        if (_selection[key] case final id? when !config.hasVariant(id)) key,
-    ];
-    if (stale.isEmpty) return;
-    await _saveSelection(
-      {..._selection}..removeWhere((k, _) => stale.contains(k)),
+  /// Repairs the saved selection after an app update or corruption: unknown
+  /// keys are dropped, renamed variants are migrated via
+  /// [IconShiftConfig.renamedVariants], removed ones are forgotten, invalid
+  /// names are discarded.
+  Future<void> _recoverSelection() async {
+    final recovered = <String, String>{};
+    final notes = <String>[];
+    _selection.forEach((key, value) {
+      switch (key) {
+        case _Keys.identity || _Keys.icon:
+          final migrated = config.migrateVariantId(value);
+          if (migrated == null) {
+            notes.add('$key "$value" no longer exists');
+          } else if (migrated == _defaultId) {
+            if (migrated != value) notes.add('$key "$value" → default');
+          } else {
+            if (migrated != value) notes.add('$key "$value" → "$migrated"');
+            recovered[key] = key == _Keys.icon
+                ? (_storedIconKey(migrated) ?? '')
+                : migrated;
+          }
+        case _Keys.name:
+          if (displayNameProblem(value) == null) {
+            recovered[key] = value;
+          } else {
+            notes.add('invalid saved name dropped');
+          }
+        default:
+          notes.add('unknown key "$key" dropped');
+      }
+    });
+    recovered.removeWhere((_, v) => v.isEmpty);
+    if (mapEquals(recovered, _selection)) return;
+    debugPrint(
+      'IconShift: recovered the saved selection (${notes.join('; ')}).',
     );
+    await _saveSelection(recovered);
+  }
+
+  IconShiftResult _result(
+    IconShiftOperation operation,
+    OperationOutcome icon,
+    OperationOutcome name,
+  ) => IconShiftResult(
+    icon: icon.withSuggestion(_suggestion(icon, IdentityProperty.launcherIcon)),
+    displayName: name.withSuggestion(
+      _suggestion(name, IdentityProperty.displayName),
+    ),
+    operation: operation,
+    platform: targetPlatform,
+  );
+
+  PropertySupport? _property(IdentityProperty property) =>
+      targetPlatform == null
+      ? null
+      : identityPropertiesFor(targetPlatform!)[property];
+
+  /// A fix for [outcome], if IconShift knows one.
+  String? _suggestion(OperationOutcome outcome, IdentityProperty property) {
+    return switch (outcome.errorCode) {
+      IconShiftErrorCode.missingAsset =>
+        'List the image under flutter > assets in pubspec.yaml and rebuild.',
+      IconShiftErrorCode.missingNativeResource => switch (targetPlatform) {
+        IconShiftPlatform.android =>
+          'Run `dart run icon_shift_cli generate`, rebuild, and check '
+              'IconShift.validateConfiguration() for alias problems.',
+        IconShiftPlatform.ios =>
+          'Add an app icon set named like the variant (`icon_shift_cli '
+              'generate`) and set ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS '
+              '= YES, then rebuild.',
+        _ => 'Check IconShift.validateConfiguration().',
+      },
+      IconShiftErrorCode.buildRequired =>
+        property == IdentityProperty.displayName
+            ? 'Set it at build time (application.display_name in '
+                  'icon_shift.yaml, then `icon_shift_cli identity --apply`) '
+                  'and rebuild.'
+            : 'Change it at build time and rebuild.',
+      IconShiftErrorCode.appNotActive =>
+        'Call it while the app is in the foreground, e.g. from a button '
+            'handler.',
+      IconShiftErrorCode.nativeOperationFailed =>
+        'See IconShift.getDiagnostics() for platform details.',
+      _ => null,
+    };
+  }
+
+  /// Web: applies the variant's theme color, or restores the page's own.
+  Future<void> _applyThemeColor(String variantId) async {
+    if (targetPlatform != IconShiftPlatform.web) return;
+    final color = variantId == _defaultId || !config.hasVariant(variantId)
+        ? null
+        : _resolve(variantId).themeColor;
+    try {
+      await platform.setThemeColor(color);
+    } on Object catch (e) {
+      debugPrint('IconShift: could not set the theme color: $e');
+    }
   }
 
   Future<List<ValidationIssue>> _checkAssets() async {
@@ -514,7 +715,7 @@ class IconShiftEngine {
     final specs = [
       for (final id in config.variantIds)
         () {
-          final resolved = config.resolve(id, targetPlatform);
+          final resolved = _resolve(id);
           return NativeVariantSpec(
             id: id,
             hasOwnIcon: id != _defaultId && !resolved.usesDefaultIcon,

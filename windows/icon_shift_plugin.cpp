@@ -10,6 +10,7 @@
 #include <flutter/plugin_registrar_windows.h>
 #include <flutter/standard_method_codec.h>
 
+#include <cwchar>
 #include <filesystem>
 #include <memory>
 #include <vector>
@@ -242,6 +243,91 @@ bool SaveSelection(const EncodableMap &selection, std::string &error) {
   return ok;
 }
 
+// Reads a string from the executable's version resource (Runner.rc).
+std::optional<std::wstring> VersionString(const std::vector<BYTE> &data,
+                                          const wchar_t *key) {
+  struct LangAndCodePage {
+    WORD language;
+    WORD code_page;
+  } *translation = nullptr;
+  UINT length = 0;
+  if (!::VerQueryValueW(data.data(), L"\\VarFileInfo\\Translation",
+                        reinterpret_cast<LPVOID *>(&translation), &length) ||
+      length < sizeof(LangAndCodePage)) {
+    return std::nullopt;
+  }
+  wchar_t sub_block[128];
+  swprintf_s(sub_block, L"\\StringFileInfo\\%04x%04x\\%ls",
+             translation[0].language, translation[0].code_page, key);
+  wchar_t *value = nullptr;
+  UINT value_length = 0;
+  if (!::VerQueryValueW(data.data(), sub_block,
+                        reinterpret_cast<LPVOID *>(&value), &value_length) ||
+      value == nullptr || value_length == 0) {
+    return std::nullopt;
+  }
+  return std::wstring(value);
+}
+
+// MSIX package family name, or nullopt when the app is not packaged.
+// Resolved at runtime so the plugin builds with any SDK target version.
+std::optional<std::wstring> PackageFamilyName() {
+  using GetFamilyName = LONG(WINAPI *)(UINT32 *, PWSTR);
+  HMODULE kernel = ::GetModuleHandleW(L"kernel32.dll");
+  auto get_family_name = kernel ? reinterpret_cast<GetFamilyName>(
+                                      ::GetProcAddress(kernel, "GetCurrentPackageFamilyName"))
+                                : nullptr;
+  if (get_family_name == nullptr) return std::nullopt;
+  UINT32 length = 0;
+  if (get_family_name(&length, nullptr) != ERROR_INSUFFICIENT_BUFFER) {
+    return std::nullopt;  // APPMODEL_ERROR_NO_PACKAGE: unpackaged.
+  }
+  std::wstring name(length, L'\0');
+  if (get_family_name(&length, name.data()) != ERROR_SUCCESS) return std::nullopt;
+  name.resize(wcsnlen(name.c_str(), name.size()));
+  return name;
+}
+
+EncodableMap ApplicationInfo(HWND window) {
+  EncodableMap info;
+  wchar_t path[MAX_PATH] = {};
+  DWORD path_length = ::GetModuleFileNameW(nullptr, path, MAX_PATH);
+  if (path_length > 0 && path_length < MAX_PATH) {
+    info[EncodableValue("executableName")] = EncodableValue(
+        WideToUtf8(std::filesystem::path(path).filename().wstring()));
+    DWORD handle = 0;
+    DWORD size = ::GetFileVersionInfoSizeW(path, &handle);
+    std::vector<BYTE> data(size);
+    if (size > 0 && ::GetFileVersionInfoW(path, 0, size, data.data())) {
+      if (auto name = VersionString(data, L"ProductName")) {
+        info[EncodableValue("displayName")] = EncodableValue(WideToUtf8(*name));
+      }
+      if (auto version = VersionString(data, L"ProductVersion")) {
+        // Flutter writes "1.2.3+4"; split into version and build number.
+        std::string value = WideToUtf8(*version);
+        size_t plus = value.find('+');
+        info[EncodableValue("version")] = EncodableValue(value.substr(0, plus));
+        if (plus != std::string::npos) {
+          info[EncodableValue("buildNumber")] =
+              EncodableValue(value.substr(plus + 1));
+        }
+      }
+    }
+  }
+  if (auto family = PackageFamilyName()) {
+    info[EncodableValue("applicationId")] = EncodableValue(WideToUtf8(*family));
+    info[EncodableValue("installationType")] = EncodableValue("msix");
+  } else {
+    info[EncodableValue("installationType")] = EncodableValue("unpackaged");
+  }
+  if (window != nullptr) {
+    info[EncodableValue("windowTitle")] =
+        EncodableValue(WideToUtf8(WindowTitle(window)));
+  }
+  info[EncodableValue("osVersion")] = EncodableValue("Windows");
+  return info;
+}
+
 EncodableMap Status(const char *status) {
   return EncodableMap{{EncodableValue("status"), EncodableValue(status)}};
 }
@@ -324,6 +410,8 @@ void IconShiftPlugin::HandleMethodCall(
         {EncodableValue("issues"), EncodableValue(EncodableList())},
         {EncodableValue("info"), EncodableValue(info)},
     }));
+  } else if (method == "getApplicationInfo") {
+    result->Success(EncodableValue(ApplicationInfo(window)));
   } else if (method == "loadSelection") {
     result->Success(EncodableValue(LoadSelection()));
   } else if (method == "saveSelection") {
