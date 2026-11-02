@@ -1,1 +1,4 @@
 #include "Generated.xcconfig"
+
+// Bundle every app icon set (IconShift alternate icons).
+ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES

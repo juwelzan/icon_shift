@@ -4,10 +4,10 @@
 #
 Pod::Spec.new do |s|
   s.name             = 'icon_shift'
-  s.version          = '0.0.1'
-  s.summary          = 'A new Flutter project.'
+  s.version          = '0.1.0'
+  s.summary          = 'Runtime app icon and display name switching for Flutter.'
   s.description      = <<-DESC
-A new Flutter project.
+Switches the app icon (and, where the OS allows, the display name) at runtime.
                        DESC
   s.homepage         = 'http://example.com'
   s.license          = { :file => '../LICENSE' }

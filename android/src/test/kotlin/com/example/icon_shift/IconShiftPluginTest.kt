@@ -1,27 +1,65 @@
 package com.example.icon_shift
 
-import io.flutter.plugin.common.MethodCall
-import io.flutter.plugin.common.MethodChannel
-import org.mockito.Mockito
 import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNull
 
 /*
- * This demonstrates a simple unit test of the Kotlin portion of this plugin's implementation.
- *
- * Once you have built the plugin's example app, you can run these tests from the command
- * line by running `./gradlew testDebugUnitTest` in the `example/android/` directory, or
- * you can run them directly from IDEs that support JUnit such as Android Studio.
+ * Unit tests of the alias switching logic. Run with
+ * `./gradlew :icon_shift:testDebugUnitTest` from example/android.
+ * Behaviour against a real PackageManager is covered by the example app's
+ * integration test.
  */
+internal class AliasSwitchPlannerTest {
+    private val default = AliasState(".IconShiftAlias_default", "default", enabled = true)
+    private val dark = AliasState(".IconShiftAlias_dark", "dark", enabled = false)
+    private val blue = AliasState(".IconShiftAlias_blue", "blue", enabled = false)
 
-internal class IconShiftPluginTest {
     @Test
-    fun onMethodCall_getPlatformVersion_returnsExpectedValue() {
-        val plugin = IconShiftPlugin()
+    fun enablesTargetBeforeDisablingCurrent() {
+        val plan = AliasSwitchPlanner.plan(listOf(default, dark, blue), "dark")
+        assertEquals(
+            SwitchPlan.Apply(
+                listOf(
+                    SwitchStep(".IconShiftAlias_dark", enable = true),
+                    SwitchStep(".IconShiftAlias_default", enable = false),
+                ),
+            ),
+            plan,
+        )
+    }
 
-        val call = MethodCall("getPlatformVersion", null)
-        val mockResult: MethodChannel.Result = Mockito.mock(MethodChannel.Result::class.java)
-        plugin.onMethodCall(call, mockResult)
+    @Test
+    fun unchangedWhenTargetIsTheOnlyEnabledAlias() {
+        assertEquals(SwitchPlan.Unchanged, AliasSwitchPlanner.plan(listOf(default, dark), "default"))
+    }
 
-        Mockito.verify(mockResult).success("Android " + android.os.Build.VERSION.RELEASE)
+    @Test
+    fun repairsSeveralEnabledAliases() {
+        val plan = AliasSwitchPlanner.plan(listOf(default, dark.copy(enabled = true), blue), "default")
+        assertEquals(SwitchPlan.Apply(listOf(SwitchStep(".IconShiftAlias_dark", enable = false))), plan)
+    }
+
+    @Test
+    fun repairsNoEnabledAlias() {
+        val plan = AliasSwitchPlanner.plan(listOf(default.copy(enabled = false), dark), "dark")
+        assertEquals(SwitchPlan.Apply(listOf(SwitchStep(".IconShiftAlias_dark", enable = true))), plan)
+    }
+
+    @Test
+    fun missingAndAmbiguousTargets() {
+        assertEquals(SwitchPlan.MissingTarget("red"), AliasSwitchPlanner.plan(listOf(default), "red"))
+        val twin = AliasState(".Other", "dark", enabled = false)
+        assertEquals(
+            SwitchPlan.Ambiguous("dark", listOf(".IconShiftAlias_dark", ".Other")),
+            AliasSwitchPlanner.plan(listOf(default, dark, twin), "dark"),
+        )
+    }
+
+    @Test
+    fun activeVariantNeedsExactlyOneEnabledAlias() {
+        assertEquals("default", AliasSwitchPlanner.activeVariant(listOf(default, dark)))
+        assertNull(AliasSwitchPlanner.activeVariant(listOf(default, dark.copy(enabled = true))))
+        assertNull(AliasSwitchPlanner.activeVariant(listOf(default.copy(enabled = false))))
     }
 }

@@ -1,0 +1,12 @@
+# Published separately as icon_shift_generator.
+generator/
+# Local tooling / build output.
+.dart_tool/
+build/
+.idea/
+.vscode/
+*.iml
+android/.gradle/
+android/local.properties
+example/build/
+example/.dart_tool/

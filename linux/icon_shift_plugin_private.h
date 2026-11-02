@@ -6,5 +6,11 @@
 // https://github.com/flutter/flutter/issues/88724 for current limitations
 // in the unit-testable API.
 
-// Handles the getPlatformVersion method call.
-FlMethodResponse *get_platform_version();
+G_DEFINE_AUTOPTR_CLEANUP_FUNC(IconShiftPlugin, g_object_unref)
+
+// Creates a plugin. |registrar| may be NULL (no window), as in tests.
+IconShiftPlugin* icon_shift_plugin_new(FlPluginRegistrar* registrar);
+
+// Handles |method| with |args| (a map or NULL) and returns the response.
+FlMethodResponse* icon_shift_plugin_handle(IconShiftPlugin* self,
+                                           const gchar* method, FlValue* args);

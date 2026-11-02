@@ -1,26 +1,211 @@
-// In order to *not* need this ignore, consider extracting the "web" version
-// of your plugin as a separate package, instead of inlining it in the same
-// package as the core of your plugin.
-// ignore: avoid_web_libraries_in_flutter
+import 'dart:convert';
+import 'dart:ui_web' as ui_web;
 
+import 'package:flutter/services.dart';
 import 'package:flutter_web_plugins/flutter_web_plugins.dart';
 import 'package:web/web.dart' as web;
 
-import 'icon_shift_platform_interface.dart';
+import 'src/config/platform.dart';
+import 'src/models/capabilities.dart';
+import 'src/models/validation.dart';
+import 'src/platform/icon_shift_platform_interface.dart';
 
-/// A web implementation of the IconShiftPlatform of the IconShift plugin.
-class IconShiftWeb extends IconShiftPlatform {
-  /// Constructs a IconShiftWeb
-  IconShiftWeb();
+/// Web implementation of IconShift: favicon and `document.title`.
+///
+/// The installed-PWA launcher icon and name come from `manifest.json`, which
+/// browsers read at install time; they cannot be changed per user at runtime
+/// and are not touched.
+class IconShiftWeb extends IconShiftPlatformInterface {
+  IconShiftWeb({web.Document? document, web.Storage? storage})
+    : _document = document ?? web.document,
+      _storageOverride = storage;
 
   static void registerWith(Registrar registrar) {
-    IconShiftPlatform.instance = IconShiftWeb();
+    IconShiftPlatformInterface.instance = IconShiftWeb();
   }
 
-  /// Returns a [String] containing the version of the platform.
+  static const storageKey = 'icon_shift.selection';
+
+  /// Marks the favicon link IconShift inserted.
+  static const _ownedAttribute = 'data-icon-shift';
+
+  final web.Document _document;
+  final web.Storage? _storageOverride;
+
+  String? _iconKey;
+
+  /// Favicon links present before the first change, restored by
+  /// [setIcon] with [defaultIconKey].
+  List<web.Element>? _originalIcons;
+  String? _originalTitle;
+
+  web.Storage? get _localStorage {
+    try {
+      return _storageOverride ?? web.window.localStorage;
+    } on Object {
+      return null; // Storage disabled (e.g. some private modes).
+    }
+  }
+
   @override
-  Future<String?> getPlatformVersion() async {
-    final version = web.window.navigator.userAgent;
-    return version;
+  Future<IconShiftCapabilities> getCapabilities() async =>
+      const IconShiftCapabilities(
+        platform: IconShiftPlatform.web,
+        icon: OperationCapability(
+          isSupported: true,
+          scope: IdentityScope.browserTab,
+          acceptsArbitraryValues: true,
+          limitation:
+              'Changes the browser-tab favicon only. The icon of an installed '
+              'PWA comes from manifest.json and cannot change at runtime.',
+        ),
+        displayName: OperationCapability(
+          isSupported: true,
+          scope: IdentityScope.browserTab,
+          acceptsArbitraryValues: true,
+          limitation:
+              'Changes document.title. The name of an installed PWA comes '
+              'from manifest.json. MaterialApp.title also writes '
+              'document.title when it rebuilds.',
+        ),
+        notes: ['Safari may not update a favicon changed after page load.'],
+      );
+
+  @override
+  Future<NativeIdentityState> getNativeState() async => NativeIdentityState(
+    iconKey: _iconKey ?? defaultIconKey,
+    displayName: _document.title,
+  );
+
+  @override
+  Future<NativeOperationResult> setIcon(NativeIconRequest request) async {
+    final head = _document.head;
+    if (head == null) {
+      throw PlatformException(
+        code: NativeErrorCodes.nativeFailure,
+        message: 'The document has no <head> element.',
+      );
+    }
+    if (request.key == (_iconKey ?? defaultIconKey)) {
+      return const NativeOperationResult('unchanged');
+    }
+
+    final current = _iconLinks();
+    _originalIcons ??= [
+      for (final link in current)
+        if (!link.hasAttribute(_ownedAttribute)) link,
+    ];
+    for (final link in current) {
+      link.remove();
+    }
+
+    if (request.key == defaultIconKey) {
+      for (final link in _originalIcons!) {
+        head.append(link);
+      }
+      _iconKey = null;
+      return const NativeOperationResult('applied');
+    }
+
+    final assetKey = request.assetKey;
+    if (assetKey == null) {
+      throw PlatformException(
+        code: NativeErrorCodes.invalidArgument,
+        message: 'No icon asset for variant "${request.key}".',
+      );
+    }
+    final link = _document.createElement('link') as web.HTMLLinkElement
+      ..rel = 'icon'
+      ..href = ui_web.assetManager.getAssetUrl(assetKey)
+      ..setAttribute(_ownedAttribute, request.key);
+    final type = _mimeType(assetKey);
+    if (type != null) link.type = type;
+    head.append(link);
+    _iconKey = request.key;
+    return const NativeOperationResult('applied');
+  }
+
+  @override
+  Future<NativeOperationResult> setDisplayName(String? name) async {
+    _originalTitle ??= _document.title;
+    final target = name ?? _originalTitle!;
+    if (_document.title == target) {
+      return const NativeOperationResult('unchanged');
+    }
+    _document.title = target;
+    return const NativeOperationResult('applied');
+  }
+
+  @override
+  Future<NativeInspection> inspect(List<NativeVariantSpec> variants) async {
+    final standalone = web.window
+        .matchMedia('(display-mode: standalone)')
+        .matches;
+    return NativeInspection(
+      issues: [
+        if (standalone)
+          const ValidationIssue(
+            severity: ValidationSeverity.info,
+            code: 'installed_pwa',
+            message:
+                'Running as an installed PWA: the launcher icon and name come '
+                'from manifest.json; only the window title and favicon '
+                'change.',
+            platform: IconShiftPlatform.web,
+          ),
+      ],
+      info: {
+        'displayModeStandalone': standalone,
+        'faviconLinks': _iconLinks().length,
+        'localStorageAvailable': _localStorage != null,
+      },
+    );
+  }
+
+  @override
+  Future<Map<String, String>> loadSelection() async {
+    final raw = _localStorage?.getItem(storageKey);
+    if (raw == null) return {};
+    try {
+      return (jsonDecode(raw) as Map<String, Object?>).map(
+        (k, v) => MapEntry(k, v as String),
+      );
+    } on Object {
+      return {}; // Corrupt entry: start fresh.
+    }
+  }
+
+  @override
+  Future<void> saveSelection(Map<String, String> selection) async {
+    final storage = _localStorage;
+    if (storage == null) {
+      throw PlatformException(
+        code: NativeErrorCodes.nativeFailure,
+        message: 'localStorage is not available.',
+      );
+    }
+    if (selection.isEmpty) {
+      storage.removeItem(storageKey);
+    } else {
+      storage.setItem(storageKey, jsonEncode(selection));
+    }
+  }
+
+  List<web.Element> _iconLinks() {
+    final nodes = _document.querySelectorAll('link[rel~="icon"]');
+    return [
+      for (var i = 0; i < nodes.length; i++) nodes.item(i)! as web.Element,
+    ];
+  }
+
+  static String? _mimeType(String path) {
+    final lower = path.toLowerCase();
+    if (lower.endsWith('.png')) return 'image/png';
+    if (lower.endsWith('.svg')) return 'image/svg+xml';
+    if (lower.endsWith('.ico')) return 'image/x-icon';
+    if (lower.endsWith('.webp')) return 'image/webp';
+    if (lower.endsWith('.gif')) return 'image/gif';
+    if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
+    return null;
   }
 }

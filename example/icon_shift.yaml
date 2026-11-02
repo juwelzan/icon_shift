@@ -1,0 +1,27 @@
+# Single source of truth for IconShift in this app.
+# Regenerate native resources and lib/icon_shift_config.g.dart with:
+#   dart run icon_shift_generator
+default:
+  name: IconShift Demo
+  icon: assets/icons/default.png          # one icon shared by every platform…
+  platforms:
+    android:
+      icon: assets/icons/default_android.png   # …except Android, which overrides it
+      name: IconShift Android                  # …and its launcher label
+    web:
+      icon: assets/icons/favicon.png           # small favicon for browser tabs
+
+variants:
+  dark:
+    name: IconShift Dark
+    icon: assets/icons/dark.png
+    platforms:
+      web:
+        icon: assets/icons/dark_favicon.png
+  blue:                                    # icon only: keeps the default name
+    icon: assets/icons/blue.png
+  pro:                                     # name only: keeps the default icon
+    name: IconShift Pro
+
+dart:
+  output: lib/icon_shift_config.g.dart
