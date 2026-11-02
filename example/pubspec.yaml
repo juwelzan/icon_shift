@@ -18,8 +18,8 @@ dev_dependencies:
   integration_test:
     sdk: flutter
   flutter_lints: ^6.0.0
-  icon_shift_generator:
-    path: ../generator
+  icon_shift_cli:
+    path: ../cli
 
 flutter:
   uses-material-design: true

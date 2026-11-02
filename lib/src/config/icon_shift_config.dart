@@ -30,6 +30,7 @@ class IconShiftConfig {
   const IconShiftConfig({
     required this.defaultIdentity,
     this.variants = const {},
+    this.renamedVariants = const {},
   });
 
   /// The id that always refers to [defaultIdentity]. It cannot be used as a
@@ -41,6 +42,13 @@ class IconShiftConfig {
 
   /// Alternative identities, keyed by variant id (`[a-z][a-z0-9_]*`).
   final Map<String, AppIdentity> variants;
+
+  /// Variant ids that were renamed or removed in an app update, mapped to
+  /// the variant that replaces them (or [defaultVariantId]). A saved
+  /// selection of an old id is migrated on [IconShift.initialize]; on
+  /// Android, icon_shift_cli keeps a disabled alias for each so devices that
+  /// show the old variant keep a launcher entry.
+  final Map<String, String> renamedVariants;
 
   /// [defaultVariantId] followed by the ids of [variants].
   List<String> get variantIds => [defaultVariantId, ...variants.keys];
@@ -58,10 +66,16 @@ class IconShiftConfig {
   /// 3. `defaultIdentity.platforms[platform]`
   /// 4. `defaultIdentity`
   ///
-  /// A `null` [platform] skips the platform-specific steps.
+  /// With a [locale] (`de`, `pt_BR`), each level's `localizedNames` is
+  /// checked (full locale, then language) before its `name`. A `null`
+  /// [platform] skips the platform-specific steps.
   ///
   /// Throws [VariantNotFoundException] for an unknown [variantId].
-  ResolvedIdentity resolve(String variantId, IconShiftPlatform? platform) {
+  ResolvedIdentity resolve(
+    String variantId,
+    IconShiftPlatform? platform, {
+    String? locale,
+  }) {
     final AppIdentity? variant;
     if (variantId == defaultVariantId) {
       variant = null;
@@ -73,24 +87,54 @@ class IconShiftConfig {
     }
     final variantOverride = variant?.platforms[platform];
     final defaultOverride = defaultIdentity.platforms[platform];
+    final tag = locale?.replaceAll('-', '_');
 
-    final ownName = variantOverride?.name ?? variant?.name;
+    String? nameAt(String? name, Map<String, String>? names) {
+      if (tag != null && names != null && names.isNotEmpty) {
+        final localized = names[tag] ?? names[tag.split('_').first];
+        if (localized != null) return localized;
+      }
+      return name;
+    }
+
+    final ownName =
+        nameAt(variantOverride?.name, variantOverride?.localizedNames) ??
+        nameAt(variant?.name, variant?.localizedNames);
     final ownIcon = variantOverride?.icon ?? variant?.icon;
     return ResolvedIdentity(
       variantId: variantId,
       platform: platform,
-      name: ownName ?? defaultOverride?.name ?? defaultIdentity.name,
+      name:
+          ownName ??
+          nameAt(defaultOverride?.name, defaultOverride?.localizedNames) ??
+          nameAt(defaultIdentity.name, defaultIdentity.localizedNames),
       icon: ownIcon ?? defaultOverride?.icon ?? defaultIdentity.icon,
       usesDefaultName: ownName == null,
       usesDefaultIcon: ownIcon == null,
+      appearance: variant?.appearance ?? defaultIdentity.appearance,
+      themeColor: variant?.themeColor ?? defaultIdentity.themeColor,
     );
+  }
+
+  /// The current id for a possibly renamed [variantId], or `null` if it is
+  /// neither configured nor in [renamedVariants].
+  String? migrateVariantId(String variantId) {
+    var id = variantId;
+    for (var hops = 0; hops < 8; hops++) {
+      if (hasVariant(id)) return id;
+      final next = renamedVariants[id];
+      if (next == null) return null;
+      id = next;
+    }
+    return null; // Cycle.
   }
 
   @override
   bool operator ==(Object other) =>
       other is IconShiftConfig &&
       other.defaultIdentity == defaultIdentity &&
-      mapEquals(other.variants, variants);
+      mapEquals(other.variants, variants) &&
+      mapEquals(other.renamedVariants, renamedVariants);
 
   @override
   int get hashCode => Object.hash(
@@ -109,6 +153,8 @@ class ResolvedIdentity {
     required this.icon,
     required this.usesDefaultName,
     required this.usesDefaultIcon,
+    this.appearance,
+    this.themeColor,
   });
 
   final String variantId;
@@ -128,6 +174,12 @@ class ResolvedIdentity {
   /// it restores the app's shipped icon.
   final bool usesDefaultIcon;
 
+  /// Appearance metadata of the variant (or the default identity).
+  final IdentityAppearance? appearance;
+
+  /// ARGB theme color of the variant (or the default identity).
+  final int? themeColor;
+
   bool get isDefault => variantId == IconShiftConfig.defaultVariantId;
 
   @override
@@ -138,7 +190,9 @@ class ResolvedIdentity {
       other.name == name &&
       other.icon == icon &&
       other.usesDefaultName == usesDefaultName &&
-      other.usesDefaultIcon == usesDefaultIcon;
+      other.usesDefaultIcon == usesDefaultIcon &&
+      other.appearance == appearance &&
+      other.themeColor == themeColor;
 
   @override
   int get hashCode => Object.hash(
@@ -148,6 +202,8 @@ class ResolvedIdentity {
     icon,
     usesDefaultName,
     usesDefaultIcon,
+    appearance,
+    themeColor,
   );
 
   @override

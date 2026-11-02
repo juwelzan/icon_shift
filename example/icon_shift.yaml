@@ -1,6 +1,6 @@
 # Single source of truth for IconShift in this app.
 # Regenerate native resources and lib/icon_shift_config.g.dart with:
-#   dart run icon_shift_generator
+#   dart run icon_shift_cli generate
 default:
   name: IconShift Demo
   icon: assets/icons/default.png          # one icon shared by every platform…
