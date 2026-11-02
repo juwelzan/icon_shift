@@ -1,5 +1,5 @@
-# Published separately as icon_shift_generator.
-generator/
+# Published separately as icon_shift_cli.
+cli/
 # Local tooling / build output.
 .dart_tool/
 build/
@@ -12,3 +12,5 @@ example/build/
 example/.dart_tool/
 # Needs the CLI sources, which are published separately.
 test/property_table_sync_test.dart
+.icon_shift/
+PROJECT_STATUS.md

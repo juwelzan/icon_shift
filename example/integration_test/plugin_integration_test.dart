@@ -137,7 +137,10 @@ void main() {
       case IconShiftPlatform.android:
         expect(info.applicationId, 'com.example.icon_shift_example');
         expect(info.version, isNotNull);
-        expect(info.currentIconVariant, 'default');
+        expect(
+          info.currentIconVariant,
+          (await IconShift.getCurrentIdentity()).nativeIconVariant,
+        );
       case IconShiftPlatform.ios || IconShiftPlatform.macos:
         expect(info.applicationId, 'com.example.iconShiftExample');
         expect(info.version, isNotNull);

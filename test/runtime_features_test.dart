@@ -412,36 +412,36 @@ void main() {
       expect(sync.isActive, isFalse, reason: 'iOS shows an alert per change');
     });
 
-    testWidgets('switches when the platform brightness changes', (
-      tester,
-    ) async {
+    test('switches when the platform brightness changes', () async {
       debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+      final dispatcher = TestWidgetsFlutterBinding.instance.platformDispatcher;
       final native = FakePlatform(desktopLike);
       final engine = IconShiftEngine(
         platform: native,
         targetPlatform: IconShiftPlatform.macos,
         assetBundle: FakeAssetBundle({'assets/default.png', 'assets/dark.png'}),
       );
-      await tester.runAsync(() => engine.initialize(_valid(localizedConfig)));
+      await engine.initialize(_valid(localizedConfig));
       IconShift.debugEngine = engine;
       final results = <IconShiftResult>[];
-      tester.platformDispatcher.platformBrightnessTestValue = Brightness.dark;
+      dispatcher.platformBrightnessTestValue = Brightness.dark;
       final sync = IconShiftThemeSync(onResult: results.add)..start();
-      await tester.pump();
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 50)),
-      );
+      Future<void> settle() =>
+          Future<void>.delayed(const Duration(milliseconds: 50));
+      await settle();
       expect(native.iconKey, 'dark');
 
-      tester.platformDispatcher.platformBrightnessTestValue = Brightness.light;
-      await tester.pump();
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 50)),
-      );
+      dispatcher.platformBrightnessTestValue = Brightness.light;
+      sync.didChangePlatformBrightness();
+      await settle();
       expect(native.iconKey, 'default');
       expect(results, hasLength(2));
+
+      sync.didChangePlatformBrightness(); // same brightness: no new switch
+      await settle();
+      expect(results, hasLength(2));
       sync.stop();
-      tester.platformDispatcher.clearPlatformBrightnessTestValue();
+      dispatcher.clearPlatformBrightnessTestValue();
     });
   });
 }

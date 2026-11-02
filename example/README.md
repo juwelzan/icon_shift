@@ -1,17 +1,33 @@
-# icon_shift_example
+# icon_shift example
 
-Demonstrates how to use the icon_shift plugin.
+Demonstrates IconShift on every platform:
 
-## Getting Started
+* one shared icon and name, overridden for Android (icon + label) and web
+  (favicon), with German translations;
+* variants `dark` (icon + name + appearance + theme color), `blue` (icon
+  only) and `pro` (name only);
+* switching identities, icon only, arbitrary names, combined updates,
+  restoring the default;
+* live capabilities, the identity property table, application info from
+  the OS, previews, validation and diagnostics;
+* a build-time `staging` profile.
 
-This project is a starting point for a Flutter application.
+Everything native is generated from [`icon_shift.yaml`](icon_shift.yaml):
 
-A few resources to get you started if this is your first Flutter project:
+```bash
+dart run ../cli/bin/icon_shift_cli.dart doctor
+dart run ../cli/bin/icon_shift_cli.dart generate
+flutter run
+```
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+On-device tests:
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+```bash
+flutter test integration_test -d <device-id>
+```
+
+Build-time profile (creates a separate "staging" app; undo with `--reset`):
+
+```bash
+dart run ../cli/bin/icon_shift_cli.dart identity --apply --profile staging --dry-run
+```

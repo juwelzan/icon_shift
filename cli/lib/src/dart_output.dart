@@ -41,6 +41,15 @@ void planDart(GeneratorConfig config, Plan plan) {
     b.writeln('  },');
   }
   b.writeln(');');
+  // `dart format` may re-wrap the file and add or drop trailing commas;
+  // that is not a change.
+  String squash(String v) => v
+      .replaceAll(RegExp(r'\s+'), '')
+      .replaceAll(RegExp(r',(?=[)\]}])'), '');
+  if (existing.existsSync() &&
+      squash(existing.readAsStringSync()) == squash(b.toString())) {
+    return;
+  }
   plan.writeString(output, b.toString());
 }
 

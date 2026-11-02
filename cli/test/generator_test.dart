@@ -193,6 +193,18 @@ flutter:
     expect(again.deletes, isEmpty);
   });
 
+  test('a reformatted generated Dart file is not rewritten', () {
+    run().apply(label: 'test');
+    final file = File(path('lib/icon_shift_config.g.dart'));
+    file.writeAsStringSync(
+      file
+          .readAsStringSync()
+          .replaceAll('),\n', '),\n\n')
+          .replaceAll("')", "',)"),
+    );
+    expect(run().writes.keys, isNot(contains('lib/icon_shift_config.g.dart')));
+  });
+
   test('removed variants are cleaned up, foreign files kept', () {
     run().apply(label: "test");
     final result = run(_yaml.replaceAll(RegExp(r'  dark:\n(    .*\n)+'), ''));
