@@ -4,7 +4,6 @@ import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
 import '../models/application_info.dart';
 import '../models/capabilities.dart';
-import '../models/shortcut_identity.dart';
 import '../models/validation.dart';
 import 'method_channel_icon_shift.dart';
 
@@ -125,23 +124,6 @@ class NativeInspection {
   final Map<String, Object?> info;
 }
 
-/// Request to create or update the IconShift home-screen shortcut. A `null`
-/// field keeps what the shortcut already shows.
-@immutable
-class NativeShortcutRequest {
-  const NativeShortcutRequest({this.name, this.bytes, this.iconKey});
-
-  final String? name;
-
-  /// Encoded image for the shortcut icon.
-  final Uint8List? bytes;
-
-  /// What [bytes] came from (asset key, remote key, variant id), stored with
-  /// the shortcut so [IconShiftPlatformInterface.getShortcutState] can
-  /// report it.
-  final String? iconKey;
-}
-
 /// The interface each platform implementation of IconShift extends.
 ///
 /// It works with native keys only; configuration logic lives in Dart
@@ -184,25 +166,6 @@ abstract class IconShiftPlatformInterface extends PlatformInterface {
   /// guessing.
   Future<ApplicationInfo> getApplicationInfo() async =>
       const ApplicationInfo(platform: null);
-
-  /// The IconShift home-screen shortcut as the launcher shows it.
-  /// Platforms without shortcuts report an unsupported state.
-  Future<ShortcutIdentityState> getShortcutState() async =>
-      const ShortcutIdentityState();
-
-  /// Creates or updates the home-screen shortcut.
-  Future<NativeOperationResult> setShortcut(NativeShortcutRequest request) =>
-      throw PlatformException(
-        code: NativeErrorCodes.unsupported,
-        message: 'This platform has no home-screen shortcuts.',
-      );
-
-  /// Disables the shortcut, showing [message] when it is tapped.
-  Future<NativeOperationResult> disableShortcut(String message) =>
-      throw PlatformException(
-        code: NativeErrorCodes.unsupported,
-        message: 'This platform has no home-screen shortcuts.',
-      );
 
   /// Sets the theme color (web: `<meta name="theme-color">`), or restores
   /// the original when [argb] is `null`. Unsupported by default.

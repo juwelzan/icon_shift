@@ -12,10 +12,10 @@ import 'models/capabilities.dart';
 import 'models/diagnostics.dart';
 import 'models/identity_properties.dart';
 import 'models/identity_variant.dart';
+import 'models/launcher_name.dart';
 import 'models/preview.dart';
 import 'models/remote_icon.dart';
 import 'models/result.dart';
-import 'models/shortcut_identity.dart';
 import 'models/state.dart';
 import 'models/validation.dart';
 import 'platform/http_fetch.dart';
@@ -43,6 +43,9 @@ abstract final class _Keys {
   /// tenant id. Only the active tenant is kept, so branding can never leak
   /// from one institution into another.
   static const branding = 'branding';
+
+  /// The last name passed to [IconShiftEngine.changeLauncherName].
+  static const launcherName = 'launcher_name';
   static const brandingTenant = 'branding_tenant';
 }
 
@@ -287,130 +290,20 @@ class IconShiftEngine {
     });
   }
 
-  /// Shows [name] and an icon on a home-screen shortcut IconShift owns —
-  /// the one launcher entry whose name and image may be chosen while the app
-  /// runs (Android). The first call asks the user to place it; later calls
-  /// update it silently.
-  ///
-  /// The icon comes from [remoteIcon] (downloaded), [icon] (an asset) or the
-  /// icon of [variant]; the name from [name] or that variant's name.
-  Future<IconShiftResult> setShortcutIdentity({
-    String? variant,
-    String? name,
-    AppIcon? icon,
-    RemoteIcon? remoteIcon,
-  }) {
-    _requireInitialized();
-    if (variant != null) _requireVariant(variant);
-    if (name != null) _requireValidName(name);
-    if (variant == null && name == null && icon == null && remoteIcon == null) {
-      throw const InvalidArgumentException(
-        'setShortcutIdentity needs a name, an icon, a remoteIcon or a '
-        'variant.',
-      );
-    }
-
-    return _serialize(() async {
-      final label =
-          name ??
-          remoteIcon?.name ??
-          (variant == null ? null : _resolve(variant).name);
-      final source = await _shortcutIcon(
-        variant: variant,
-        icon: icon,
-        remoteIcon: remoteIcon,
-      );
-      if (source.error case final failure?) {
-        return _result(
-          IconShiftOperation.setShortcutIdentity,
-          failure,
-          _skippedAfterIconFailure,
-        );
-      }
-
-      OperationOutcome outcome;
-      if (!_capabilities.shortcut.isSupported) {
-        outcome = OperationOutcome.unsupported(
-          _capabilities.shortcut.limitation ??
-              'Home-screen shortcuts are not available on '
-                  '${_platformName()}.',
-        );
-      } else {
-        try {
-          outcome = _outcomeFromNative(
-            await platform.setShortcut(
-              NativeShortcutRequest(
-                name: label,
-                bytes: source.bytes,
-                iconKey: source.key,
-              ),
-            ),
-          );
-        } on Object catch (e) {
-          outcome = _outcomeFromError(e);
-        }
-      }
-      // One shortcut carries both, so both report the same outcome.
-      return _result(
-        IconShiftOperation.setShortcutIdentity,
-        source.key == null ? const OperationOutcome.notRequested() : outcome,
-        label == null ? const OperationOutcome.notRequested() : outcome,
-      );
-    });
-  }
-
-  /// The home-screen shortcut as the launcher shows it now.
-  Future<ShortcutIdentityState> getShortcutIdentity() async {
-    _requireInitialized();
-    try {
-      return await platform.getShortcutState();
-    } on Object catch (e) {
-      debugPrint('IconShift: could not read the shortcut state: $e');
-      return ShortcutIdentityState(
-        limitation: _capabilities.shortcut.limitation ?? '$e',
-      );
-    }
-  }
-
-  /// Disables the shortcut. Only the user can take it off the home screen.
-  Future<IconShiftResult> removeShortcutIdentity(String message) {
-    _requireInitialized();
-    return _serialize(() async {
-      OperationOutcome outcome;
-      try {
-        outcome = _outcomeFromNative(await platform.disableShortcut(message));
-      } on Object catch (e) {
-        outcome = _outcomeFromError(e);
-      }
-      return _result(IconShiftOperation.setShortcutIdentity, outcome, outcome);
-    });
-  }
-
-  /// Applies [name] and an icon in the strongest way this platform allows:
-  /// the app's own identity where arbitrary values are accepted (macOS,
-  /// Windows, Linux, web), a home-screen shortcut on Android, and the
-  /// preconfigured variant on iOS (where the name cannot change at all).
+  /// Applies [name] and an icon in the strongest way this platform allows,
+  /// always on the app itself: arbitrary values on macOS, Windows, Linux
+  /// and web; on Android the variant whose compiled-in name matches (see
+  /// [changeLauncherName]); on iOS the icon of [variant] only — the name
+  /// cannot change at runtime.
   Future<IconShiftResult> setArbitraryIdentity({
     String? variant,
     String? name,
-    AppIcon? icon,
     RemoteIcon? remoteIcon,
   }) async {
     _requireInitialized();
     if (variant != null) _requireVariant(variant);
     if (name != null) _requireValidName(name);
 
-    // Android: the app entry only shows compiled-in values (its arbitrary
-    // name reaches the recent-apps screen, not the launcher), a shortcut any.
-    if (_capabilities.shortcut.isSupported &&
-        !_capabilities.icon.acceptsArbitraryValues) {
-      return setShortcutIdentity(
-        variant: variant,
-        name: name,
-        icon: icon,
-        remoteIcon: remoteIcon,
-      );
-    }
     if (remoteIcon != null) {
       final result = await setRemoteIcon(
         name == null ? remoteIcon : remoteIcon.withName(name),
@@ -425,66 +318,152 @@ class IconShiftEngine {
     return setCustomIdentity(iconVariant: variant, displayName: name);
   }
 
-  /// Icon bytes for the shortcut, with the key identifying their source.
-  Future<({Uint8List? bytes, String? key, OperationOutcome? error})>
-  _shortcutIcon({
-    String? variant,
-    AppIcon? icon,
-    RemoteIcon? remoteIcon,
-  }) async {
-    if (remoteIcon != null) {
-      final url = remoteIcon.urlFor(_systemMode());
-      try {
-        final bytes = await _fetch(url, maxBytes: maxRemoteIconBytes);
-        if (!looksLikeImage(bytes)) {
-          return (
-            bytes: null,
-            key: null,
-            error: OperationOutcome.failed(
-              IconShiftErrorCode.downloadFailed,
-              '$url did not return an image.',
+  /// Changes the name the **installed** app's own launcher entry shows —
+  /// home screen and app drawer — without a rebuild or reinstall, as far as
+  /// the OS allows. The result is read back from the OS, not assumed.
+  ///
+  /// * **Android** — the launcher shows the label of the enabled
+  ///   activity-alias. When a variant carries [name], its alias is enabled
+  ///   with `PackageManager.setComponentEnabledSetting` (the new one before
+  ///   the old one is disabled, so the app always stays launchable). The
+  ///   current icon is kept when a variant has both. A name that is not
+  ///   compiled into the app cannot be shown: Android has no API to set an
+  ///   arbitrary label on a component. Nothing else is created — no widget,
+  ///   no shortcut, no second icon.
+  /// * **iOS** — no public API exists: the Home Screen name is
+  ///   `CFBundleDisplayName` of the signed bundle. Returns `unsupported`.
+  /// * **macOS, Windows, Linux, web** — the window / tab title.
+  Future<LauncherNameResult> changeLauncherName(String name) async {
+    _requireInitialized();
+    _requireValidName(name);
+    await _serialize(
+      () => _saveSelection({..._selection, _Keys.launcherName: name}),
+    );
+    final available = _launcherNames();
+
+    if (_capabilities.iconAndNameLinked) {
+      final current = await _activeVariant();
+      final match = _linkedVariantFor(current, name) ?? _variantNamed(name);
+      if (match == null) {
+        return LauncherNameResult(
+          requested: name,
+          scope: LauncherNameScope.unsupported,
+          status: OperationStatus.unsupported,
+          result: _result(
+            IconShiftOperation.setDisplayName,
+            const OperationOutcome.notRequested(),
+            OperationOutcome.unsupported(
+              'The launcher entry can only show names compiled into the app.',
+              code: IconShiftErrorCode.buildRequired,
             ),
-          );
-        }
-        return (bytes: bytes, key: remoteIcon.key, error: null);
-      } on Object catch (e) {
-        return (
-          bytes: null,
-          key: null,
-          error: OperationOutcome.failed(
-            IconShiftErrorCode.downloadFailed,
-            'Could not download $url: $e',
           ),
+          appEntryName: await _appEntryName(),
+          availableNames: available,
+          message:
+              '"$name" is not compiled into this app, and Android cannot give '
+              'the launcher entry a label that is not in the APK. Names it '
+              'can switch to now: ${available.map((n) => '"$n"').join(', ')}. '
+              'Add "$name" as a variant in icon_shift.yaml and ship that '
+              'build once; afterwards it switches at runtime too.',
         );
       }
+      final result = await setIdentity(match);
+      final now = await _appEntryName();
+      final ok = now == name;
+      return LauncherNameResult(
+        requested: name,
+        scope: LauncherNameScope.appEntry,
+        status: ok ? result.icon.status : OperationStatus.failed,
+        result: result,
+        appEntryName: now,
+        availableNames: available,
+        message: !ok
+            ? 'The launcher reports "$now" after switching to "$match". '
+                  'Some launchers need a few seconds to refresh.'
+            : match == current || _resolve(match).icon == _resolve(current).icon
+            ? null
+            : 'Variant "$match" carries this name with its own icon, so the '
+                  'icon changed too.',
+      );
     }
 
-    final asset =
-        icon ??
-        (variant == null ? null : _resolve(variant).iconFor(_systemMode()));
-    if (asset == null) return (bytes: null, key: null, error: null);
-    try {
-      final data = await _assets.load(asset.assetKey);
-      return (
-        bytes: data.buffer.asUint8List(),
-        key: asset.assetKey,
-        error: null,
+    if (_capabilities.displayName.acceptsArbitraryValues) {
+      final result = await setDisplayName(name);
+      return LauncherNameResult(
+        requested: name,
+        scope: LauncherNameScope.windowTitle,
+        status: result.displayName.status,
+        result: result,
+        appEntryName: await _appEntryName(),
+        message:
+            'Desktop and web have no runtime launcher name; the window/tab '
+            'title shows "$name".',
       );
-    } on Object {
-      return (
-        bytes: null,
-        key: null,
-        error: OperationOutcome.failed(
-          IconShiftErrorCode.missingAsset,
-          'Could not load icon asset "${asset.assetKey}".',
+    }
+
+    return LauncherNameResult(
+      requested: name,
+      scope: LauncherNameScope.unsupported,
+      status: OperationStatus.unsupported,
+      result: _result(
+        IconShiftOperation.setDisplayName,
+        const OperationOutcome.notRequested(),
+        OperationOutcome.unsupported(
+          _capabilities.displayName.limitation ??
+              'This platform cannot rename an installed app.',
+          code: IconShiftErrorCode.buildRequired,
         ),
-      );
+      ),
+      appEntryName: await _appEntryName(),
+      message:
+          '${_platformName()} has no public API to change an installed '
+          "app's Home Screen name: it is CFBundleDisplayName in the signed "
+          'bundle. Only a new build changes it.',
+    );
+  }
+
+  /// The launcher names of this install, read from the OS.
+  Future<LauncherNameInfo> getLauncherName() async {
+    _requireInitialized();
+    return LauncherNameInfo(
+      appEntryName: await _appEntryName(),
+      requestedName: _selection[_Keys.launcherName],
+      availableNames: _launcherNames(),
+      canSwitchAppEntry: _capabilities.iconAndNameLinked,
+    );
+  }
+
+  /// Applies the last requested launcher name again. `null` when no name
+  /// was requested.
+  Future<LauncherNameResult?> refreshLauncherName() async {
+    _requireInitialized();
+    final name = _selection[_Keys.launcherName];
+    if (name == null) return null;
+    return changeLauncherName(name);
+  }
+
+  /// The app entry's name as the OS reports it.
+  Future<String?> _appEntryName() async {
+    try {
+      return (await platform.getApplicationInfo()).displayName;
+    } on Object {
+      return null;
     }
   }
 
-  /// The system icon appearance, or light when it is not being followed.
-  IconAppearanceMode _systemMode() =>
-      _systemAppearance?.call() ?? IconAppearanceMode.light;
+  /// A variant whose name for this platform is [name], any icon.
+  String? _variantNamed(String name) {
+    for (final id in config.variantIds) {
+      if (_resolve(id).name == name) return id;
+    }
+    return null;
+  }
+
+  /// Distinct names the app entry can switch to.
+  List<String> _launcherNames() {
+    if (!_capabilities.iconAndNameLinked) return const [];
+    return {for (final id in config.variantIds) ?_resolve(id).name}.toList();
+  }
 
   /// Downloads and parses the [RemoteIcon] JSON at [url].
   Future<RemoteIcon> fetchRemoteIcon(Uri url) async {
@@ -1065,6 +1044,8 @@ class IconShiftEngine {
           }
         case _Keys.brandingTenant:
           recovered[key] = value;
+        case _Keys.launcherName:
+          if (displayNameProblem(value) == null) recovered[key] = value;
         case _Keys.remote:
           try {
             RemoteIcon.decode(value);

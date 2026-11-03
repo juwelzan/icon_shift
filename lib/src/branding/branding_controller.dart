@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 
 import '../engine.dart';
+import '../models/launcher_name.dart';
 import '../models/remote_icon.dart';
 import '../models/result.dart';
 import '../exceptions.dart';
@@ -13,15 +14,11 @@ import 'branding_provider.dart';
 
 /// How far native (launcher) branding got on this platform.
 enum NativeBrandingScope {
-  /// The app's own launcher entry now shows the tenant's name and icon.
+  /// The app's own launcher entry now shows the tenant's name (and icon).
   applied,
 
-  /// Applied to a home-screen shortcut beside the app, because the app's
-  /// own entry only shows what the build compiled in (Android).
-  shortcut,
-
-  /// The OS only shows values compiled into the app: produce a branded
-  /// build for this tenant (`icon_shift_cli brand`).
+  /// The OS only shows values compiled into the app and this tenant's are
+  /// not: produce a build that contains them (`icon_shift_cli`).
   requiresBuild,
 
   /// This platform has no launcher identity IconShift can change.
@@ -274,26 +271,39 @@ class BrandingController extends ChangeNotifier
     _emit(BrandingState(profile: _default, status: BrandingStatus.idle));
   }
 
-  /// Applies the active branding to the **launcher** as far as the platform
-  /// allows, and reports how far that was.
+  /// Applies the active branding to the app's **own launcher entry** as far
+  /// as the platform allows, and reports how far that was. Nothing else is
+  /// created — no widget, shortcut or second icon.
   ///
   /// | Platform | Result |
   /// | --- | --- |
+  /// | Android | the launcher entry switches to the variant whose compiled-in name matches; otherwise `requiresBuild` |
+  /// | iOS | the icon of [fallbackVariant] if the build has it; the name needs a build |
   /// | macOS, Windows, Linux | Dock/taskbar icon and window title |
   /// | Web | favicon and tab title |
-  /// | Android | a home-screen shortcut carrying the name and icon |
-  /// | iOS | the icon of [fallbackVariant] if the build has it; the name needs a branded build |
-  ///
-  /// [NativeBrandingReport.needsBuild] tells the app to ask for a branded
-  /// build (`icon_shift_cli brand`) instead of pretending it worked.
   Future<NativeBrandingReport> applyLauncherBranding({
     String? fallbackVariant,
   }) async {
     final profile = _state.profile;
-    final icon = profile.launcherIconUrl;
+    final name = profile.displayName;
     final capabilities = await _engine.getCapabilities();
+
+    if (capabilities.iconAndNameLinked && name != null) {
+      final launcher = await _engine.changeLauncherName(name);
+      return NativeBrandingReport(
+        scope: launcher.isAppEntryChanged
+            ? NativeBrandingScope.applied
+            : launcher.scope == LauncherNameScope.unsupported
+            ? NativeBrandingScope.requiresBuild
+            : NativeBrandingScope.unsupported,
+        result: launcher.result,
+        message: launcher.message,
+      );
+    }
+
+    final icon = profile.launcherIconUrl;
     final result = await _engine.setArbitraryIdentity(
-      name: profile.displayName,
+      name: name,
       variant: fallbackVariant,
       remoteIcon: icon == null
           ? null
@@ -305,7 +315,7 @@ class BrandingController extends ChangeNotifier
     );
 
     final wanted = [
-      if (profile.displayName != null) result.displayName,
+      if (name != null) result.displayName,
       if (icon != null || fallbackVariant != null) result.icon,
     ];
     final blocked = wanted.where(
@@ -319,22 +329,15 @@ class BrandingController extends ChangeNotifier
       scope = NativeBrandingScope.unsupported;
       message = 'The branding carries neither a name nor an icon.';
     } else if (blocked.isEmpty) {
-      scope = capabilities.icon.acceptsArbitraryValues
-          ? NativeBrandingScope.applied
-          : NativeBrandingScope.shortcut;
-      if (scope == NativeBrandingScope.shortcut) {
-        message =
-            'Applied to a home-screen shortcut; the app entry itself shows '
-            'what the build compiled in.';
-      }
+      scope = NativeBrandingScope.applied;
     } else if (blocked.any(
       (o) => o.errorCode == IconShiftErrorCode.buildRequired,
     )) {
       scope = NativeBrandingScope.requiresBuild;
       message =
-          'This platform only shows a launcher name and icon compiled into '
-          'the app. Build this tenant its own app: `dart run icon_shift_cli '
-          'brand` with the tenant\'s branding.';
+          'This platform only shows a launcher name compiled into the app. '
+          'Build this tenant its own app: `dart run icon_shift_cli brand` '
+          'with the tenant\'s branding.';
     } else {
       scope = NativeBrandingScope.unsupported;
       message = blocked.first.message;

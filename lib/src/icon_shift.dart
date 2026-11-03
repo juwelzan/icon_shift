@@ -19,9 +19,9 @@ import 'models/identity_properties.dart';
 import 'models/identity_variant.dart';
 import 'models/preview.dart';
 import 'branding/branding_profile.dart';
+import 'models/launcher_name.dart';
 import 'models/remote_icon.dart';
 import 'models/result.dart';
-import 'models/shortcut_identity.dart';
 import 'models/state.dart';
 import 'models/validation.dart';
 import 'platform/icon_shift_platform_interface.dart';
@@ -115,6 +115,43 @@ abstract final class IconShift {
   /// Re-fetches the active tenant's branding.
   static Future<BrandingState> refreshBranding() => branding.refresh();
 
+  /// Changes the name the **installed** app's own launcher entry shows —
+  /// home screen and app drawer — without a rebuild or reinstall, and reads
+  /// the result back from the OS:
+  ///
+  /// | Platform | What changes |
+  /// | --- | --- |
+  /// | Android | the app entry itself, to any name compiled in as a variant in `icon_shift.yaml`; other names are `unsupported` |
+  /// | iOS | nothing — no public API renames an installed app (`unsupported`) |
+  /// | macOS, Windows, Linux, web | the window / tab title |
+  ///
+  /// No widget, shortcut or second icon is ever created.
+  ///
+  /// ```dart
+  /// final r = await IconShift.changeLauncherName('ABC School');
+  /// if (r.isAppEntryChanged) { /* home screen and drawer show it */ }
+  /// ```
+  static Future<LauncherNameResult> changeLauncherName(String name) =>
+      _require.changeLauncherName(name);
+
+  /// The launcher names of this install, read from the OS.
+  static Future<LauncherNameInfo> getLauncherName() =>
+      _require.getLauncherName();
+
+  /// Applies the last requested launcher name again.
+  static Future<LauncherNameResult?> refreshLauncherName() =>
+      _require.refreshLauncherName();
+
+  /// Fetches the active tenant's branding and applies its name to the
+  /// launcher entry. `null` when no tenant is loaded or the branding has no
+  /// name.
+  static Future<LauncherNameResult?> syncBranding() async {
+    final state = await branding.refresh();
+    final name = state.profile.displayName;
+    if (state.tenantId == null || name == null) return null;
+    return changeLauncherName(name);
+  }
+
   /// Shows [profile] directly, without a provider.
   static Future<BrandingState> applyBranding(BrandingProfile profile) =>
       branding.apply(profile);
@@ -195,78 +232,25 @@ abstract final class IconShift {
   static Future<IconShiftResult> setRemoteIcon(RemoteIcon icon) =>
       _require.setRemoteIcon(icon);
 
-  /// Shows [name] and an icon in the strongest way the platform allows,
-  /// so one call changes the visible identity everywhere:
+  /// Applies [name] and an icon to the app itself, in the strongest way the
+  /// platform allows:
   ///
   /// | Platform | What it changes |
   /// | --- | --- |
   /// | macOS, Windows, Linux | Dock/taskbar icon and window title |
   /// | Web | favicon and document title |
-  /// | Android | a home-screen shortcut with exactly this name and icon (the app entry itself can only show values compiled into the build) |
+  /// | Android | the launcher entry, when a variant has this name (see [changeLauncherName]) |
   /// | iOS | the icon of [variant]; the name cannot change at runtime at all |
-  ///
-  /// On Android the first call shows the system's "add to home screen"
-  /// dialog; after the user accepts once, every later call is silent. Use
-  /// [setShortcutIdentity] directly when you want that behaviour
-  /// explicitly, and [getCapabilities] to know what will happen
-  /// ([IconShiftCapabilities.canShowArbitraryIdentity]).
   @useResult
   static Future<IconShiftResult> setArbitraryIdentity({
     String? variant,
     String? name,
-    AppIcon? icon,
     RemoteIcon? remoteIcon,
   }) => _require.setArbitraryIdentity(
     variant: variant,
     name: name,
-    icon: icon,
     remoteIcon: remoteIcon,
   );
-
-  /// Puts [name] and an icon on a home-screen shortcut IconShift owns, the
-  /// only launcher entry whose name and image can be chosen while the app
-  /// runs (Android 8+ with a launcher that supports pinning).
-  ///
-  /// ```dart
-  /// await IconShift.setShortcutIdentity(
-  ///   name: 'Work Notes',
-  ///   icon: AppIcon.asset('assets/icons/work.png'),
-  /// );
-  /// // or straight from a server:
-  /// await IconShift.setShortcutIdentity(remoteIcon: icon, name: icon.name);
-  /// ```
-  ///
-  /// The icon comes from [remoteIcon] (downloaded), [icon] (a bundled asset)
-  /// or the icon of [variant]; the name from [name], else the remote icon's
-  /// or that variant's name. The first call asks the user to place the
-  /// shortcut (the result is then `pending`); later calls update it with no
-  /// dialog. The shortcut is an **extra** entry: the app's own name and icon
-  /// in the app drawer and settings stay as built.
-  @useResult
-  static Future<IconShiftResult> setShortcutIdentity({
-    String? variant,
-    String? name,
-    AppIcon? icon,
-    RemoteIcon? remoteIcon,
-  }) => _require.setShortcutIdentity(
-    variant: variant,
-    name: name,
-    icon: icon,
-    remoteIcon: remoteIcon,
-  );
-
-  /// The home-screen shortcut as the launcher shows it: whether it is
-  /// supported, whether the user placed it, and its current name and icon.
-  static Future<ShortcutIdentityState> getShortcutIdentity() =>
-      _require.getShortcutIdentity();
-
-  /// Disables the shortcut, showing [message] when it is tapped. No app may
-  /// take a shortcut off the home screen; only the user can.
-  /// [setShortcutIdentity] enables it again.
-  @useResult
-  static Future<IconShiftResult> removeShortcutIdentity({
-    String message = 'This shortcut is no longer available.',
-  }) => _require.removeShortcutIdentity(message);
 
   /// Downloads the [RemoteIcon] JSON at [url] (https only). Throws
   /// [InvalidArgumentException] when it cannot be fetched or parsed.

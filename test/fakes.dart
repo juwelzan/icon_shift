@@ -66,14 +66,9 @@ class FakePlatform extends IconShiftPlatformInterface
   final calls = <String>[];
   final iconRequests = <NativeIconRequest>[];
 
-  /// The shortcut as the launcher shows it.
-  ShortcutIdentityState shortcut = const ShortcutIdentityState();
-  final shortcutRequests = <NativeShortcutRequest>[];
-
   /// When set, setIcon throws this.
   PlatformException? iconError;
   PlatformException? nameError;
-  PlatformException? shortcutError;
   List<ValidationIssue> inspectionIssues = [];
 
   @override
@@ -102,35 +97,6 @@ class FakePlatform extends IconShiftPlatformInterface
     final target = name ?? originalName;
     if (target == displayName) return const NativeOperationResult('unchanged');
     displayName = target;
-    return const NativeOperationResult('applied');
-  }
-
-  @override
-  Future<ShortcutIdentityState> getShortcutState() async => shortcut;
-
-  @override
-  Future<NativeOperationResult> setShortcut(
-    NativeShortcutRequest request,
-  ) async {
-    calls.add('setShortcut:${request.name}/${request.iconKey}');
-    shortcutRequests.add(request);
-    if (shortcutError != null) throw shortcutError!;
-    final isFirst = !shortcut.isPinned;
-    shortcut = ShortcutIdentityState(
-      isSupported: true,
-      isPinned: true,
-      name: request.name ?? shortcut.name,
-      iconKey: request.iconKey ?? shortcut.iconKey,
-    );
-    // The launcher asks the user the first time, then updates silently.
-    return NativeOperationResult(isFirst ? 'pending' : 'applied');
-  }
-
-  @override
-  Future<NativeOperationResult> disableShortcut(String message) async {
-    calls.add('disableShortcut:$message');
-    if (!shortcut.isPinned) return const NativeOperationResult('unchanged');
-    shortcut = ShortcutIdentityState(isSupported: true, name: shortcut.name);
     return const NativeOperationResult('applied');
   }
 

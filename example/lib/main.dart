@@ -123,6 +123,43 @@ class _DemoPageState extends State<DemoPage> {
     }
   }
 
+  /// Renames the installed app's launcher entry (Android: among the names
+  /// compiled in, else a shortcut; iOS: not possible) and shows the result
+  /// as read back from the OS.
+  Future<void> _changeLauncherName() async {
+    setState(() => _busy = true);
+    try {
+      final r = await IconShift.changeLauncherName(_name.text.trim());
+      final where = switch (r.scope) {
+        LauncherNameScope.appEntry => 'Home screen and app drawer',
+        LauncherNameScope.shortcut => 'Home-screen shortcut',
+        LauncherNameScope.windowTitle => 'Window title',
+        LauncherNameScope.unsupported => 'Not possible here',
+      };
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              '$where: ${r.status.name}\n'
+              'App entry now: ${r.appEntryName ?? '?'}'
+              '${r.shortcutName == null ? '' : '\nShortcut: ${r.shortcutName}'}'
+              '${r.message == null ? '' : '\n${r.message}'}',
+            ),
+          ),
+        );
+      }
+    } on IconShiftException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(e.message)));
+      }
+    } finally {
+      await _refresh();
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   /// Says what the user will see, not the enum names: "unchanged" means the
   /// value is already in effect, which reads like failure otherwise.
   String _summary(IconShiftResult r) {
@@ -369,6 +406,11 @@ class _DemoPageState extends State<DemoPage> {
       Wrap(
         spacing: 8,
         children: [
+          FilledButton(
+            key: const ValueKey('change-launcher-name'),
+            onPressed: _busy ? null : _changeLauncherName,
+            child: const Text('Change launcher name'),
+          ),
           OutlinedButton(
             key: const ValueKey('set-name'),
             onPressed: _busy

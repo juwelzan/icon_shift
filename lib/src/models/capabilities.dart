@@ -20,10 +20,6 @@ enum IdentityScope {
   /// task label).
   taskSwitcher,
 
-  /// A home-screen shortcut next to the app entry (Android), whose name and
-  /// icon are chosen at runtime.
-  launcherShortcut,
-
   /// Not supported.
   none,
 }
@@ -131,9 +127,6 @@ class IconShiftCapabilities {
     required this.platform,
     required this.icon,
     required this.displayName,
-    this.shortcut = const OperationCapability.unsupported(
-      'This platform has no home-screen shortcuts IconShift can own.',
-    ),
     this.iconAndNameLinked = false,
     this.notes = const [],
   });
@@ -142,18 +135,12 @@ class IconShiftCapabilities {
   IconShiftCapabilities.none(this.platform, String reason)
     : icon = OperationCapability.unsupported(reason),
       displayName = OperationCapability.unsupported(reason),
-      shortcut = OperationCapability.unsupported(reason),
       iconAndNameLinked = false,
       notes = const [];
 
   final IconShiftPlatform? platform;
   final OperationCapability icon;
   final OperationCapability displayName;
-
-  /// A home-screen shortcut with an arbitrary name and icon (Android).
-  /// Unlike [icon] and [displayName] it accepts values chosen at runtime,
-  /// but it is an extra entry beside the app, not the app entry itself.
-  final OperationCapability shortcut;
 
   /// `true` when icon and display name can only change together (Android:
   /// each activity-alias has exactly one icon and one label).
@@ -164,10 +151,10 @@ class IconShiftCapabilities {
 
   bool get canChangeIcon => icon.isSupported;
 
-  /// A name and icon chosen at runtime can be shown somewhere.
+  /// Any name and image chosen at runtime can be applied to the app itself
+  /// (desktop and web; never Android's or iOS's launcher entry).
   bool get canShowArbitraryIdentity =>
-      shortcut.isSupported ||
-      (icon.acceptsArbitraryValues && displayName.acceptsArbitraryValues);
+      icon.acceptsArbitraryValues && displayName.acceptsArbitraryValues;
   bool get canChangeDisplayName => displayName.isSupported;
 
   /// Preconfigured variants can be switched to.
@@ -190,12 +177,6 @@ class IconShiftCapabilities {
       platform: platform,
       icon: OperationCapability.fromMap(sub('icon')),
       displayName: OperationCapability.fromMap(sub('displayName')),
-      shortcut: map.containsKey('shortcut')
-          ? OperationCapability.fromMap(sub('shortcut'))
-          : OperationCapability.unsupported(
-              'IconShift has no home-screen shortcut on '
-              '${platform?.name ?? 'this platform'}.',
-            ),
       iconAndNameLinked: map['iconAndNameLinked'] as bool? ?? false,
       notes: [...?(map['notes'] as List<Object?>?)?.cast<String>()],
     );
@@ -207,7 +188,6 @@ class IconShiftCapabilities {
       other.platform == platform &&
       other.icon == icon &&
       other.displayName == displayName &&
-      other.shortcut == shortcut &&
       other.iconAndNameLinked == iconAndNameLinked &&
       listEquals(other.notes, notes);
 
@@ -216,7 +196,6 @@ class IconShiftCapabilities {
     platform,
     icon,
     displayName,
-    shortcut,
     iconAndNameLinked,
     Object.hashAll(notes),
   );
@@ -224,6 +203,6 @@ class IconShiftCapabilities {
   @override
   String toString() =>
       'IconShiftCapabilities(${platform?.name ?? 'unknown'}: icon: $icon; '
-      'displayName: $displayName; shortcut: $shortcut'
+      'displayName: $displayName'
       '${iconAndNameLinked ? '; linked' : ''})';
 }

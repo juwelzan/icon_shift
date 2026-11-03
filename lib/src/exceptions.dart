@@ -64,7 +64,6 @@ enum IconShiftOperation {
   setDisplayName,
   setCustomIdentity,
   setRemoteIcon,
-  setShortcutIdentity,
   restoreDefault,
   query,
 }

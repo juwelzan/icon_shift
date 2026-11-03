@@ -2,6 +2,14 @@
 
 Runtime (`icon_shift`):
 
+* Post-install launcher name: `IconShift.changeLauncherName`,
+  `getLauncherName`, `refreshLauncherName` and `syncBranding`. On Android
+  the installed app's home-screen and app-drawer name switch to any name
+  compiled in as a variant (activity-alias), read back from the OS; other
+  names go to a home-screen shortcut. On iOS no public API exists and the
+  call reports `unsupported` / `buildRequired`. `LauncherNameResult` /
+  `LauncherNameInfo` say exactly where the name now shows. Verified on an
+  installed Android 10 app and the iOS 26 simulator.
 * Multi-tenant (white-label) branding, back-end agnostic:
   `BrandingProvider` (`HttpBrandingProvider`, `CallbackBrandingProvider`,
   `StaticBrandingProvider`, or your own) says which tenant is active and

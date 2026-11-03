@@ -78,6 +78,65 @@ variants.
 | `validateConfiguration()` | Config checks, bundled assets, native resources. |
 | `getDiagnostics()` | Everything above as one report; contains no user data. |
 
+## Changing the launcher name after installation
+
+```dart
+final r = await IconShift.changeLauncherName('ABC School');
+r.isAppEntryChanged;   // home screen and app drawer show it
+r.appEntryName;        // read back from the OS after the call
+r.scope;               // appEntry · shortcut · windowTitle · unsupported
+
+await IconShift.getLauncherName();     // app entry, shortcut, available names
+await IconShift.refreshLauncherName(); // re-apply the last request
+await IconShift.syncBranding();        // refresh branding, apply its name
+```
+
+No rebuild, no reinstall, no store update: the change happens on the
+installed app. What each OS allows:
+
+### Android — yes, among the names compiled into the app
+
+The launcher reads the label of the enabled activity-alias.
+`changeLauncherName` finds the variant whose name matches, enables its alias
+with `PackageManager.setComponentEnabledSetting` (the new one first, so the
+app never has zero launcher entries), and reads the label back. The home
+screen **and** the app drawer change; data and the application id are kept.
+
+* The names have to be in the APK: add each as a variant in
+  `icon_shift.yaml` (`abc: { name: ABC School }`) and run
+  `icon_shift_cli generate` once. A server can then switch between them at
+  any time. `getLauncherName().availableNames` lists them.
+* A name that is **not** in the APK cannot become the app entry's label —
+  Android has no API to set an arbitrary label on a component. IconShift
+  places it on a home-screen shortcut instead (`scope: shortcut`; the user
+  accepts once, later renames are silent); the app drawer keeps the app
+  entry's name. `allowShortcut: false` turns that off.
+* The app must be in the foreground to request the shortcut.
+* Launchers may take a few seconds to redraw. A name-only variant keeps the
+  current icon; a variant with its own icon changes it too (the result says
+  so).
+
+### iOS — no
+
+There is no public API to change an installed app's Home Screen name. It is
+`CFBundleDisplayName` in the signed bundle; `setAlternateIconName` changes
+only the icon, and alternate icons carry no name. Writing to `Info.plist` at
+runtime is impossible (the bundle is read-only and signed). `changeLauncherName`
+returns `scope: unsupported`, `errorCode: buildRequired`, and changes
+nothing. A different name needs a new build (`icon_shift_cli brand`).
+
+### Verified on installed apps
+
+One install of an app named "Schoolmate", renamed at runtime; the launcher was
+read with `uiautomator` on Android and a Home Screen screenshot on iOS:
+
+| Call | Android 10 home screen | Android 10 app drawer | iOS 26 Home Screen |
+| --- | --- | --- | --- |
+| (installed) | Schoolmate | Schoolmate | Schoolmate |
+| `changeLauncherName('ABC School')` | ABC School | ABC School | Schoolmate (`unsupported`) |
+| `changeLauncherName('XYZ College')` | XYZ College | XYZ College | — |
+| `changeLauncherName('Sunrise Academy')`, not compiled in | + shortcut "Sunrise Academy" | XYZ College | — |
+
 ## Display name vs. other names
 
 IconShift keeps these apart:
