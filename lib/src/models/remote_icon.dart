@@ -129,6 +129,17 @@ class RemoteIcon {
   /// Identifier used in the saved selection and native state.
   String get key => id ?? url.toString();
 
+  /// A copy that applies [name] with the icon.
+  RemoteIcon withName(String name) => RemoteIcon(
+    url: url,
+    id: id,
+    dark: dark,
+    tinted: tinted,
+    clear: clear,
+    variant: variant,
+    name: name,
+  );
+
   /// The artwork for [mode], falling back to [url].
   Uri urlFor(IconAppearanceMode mode) =>
       switch (mode) {

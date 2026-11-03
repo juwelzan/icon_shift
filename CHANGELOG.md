@@ -20,6 +20,17 @@ Runtime (`icon_shift`):
   (`IdentityScope.taskSwitcher`) with a message listing the launcher names,
   instead of returning `unsupported`. The recent-apps label also follows the
   active alias right after a switch.
+* Any name and icon at runtime, without a rebuild:
+  `IconShift.setArbitraryIdentity()` applies them through the strongest
+  mechanism a platform has — the app's own identity on macOS, Windows, Linux
+  and web, and a home-screen shortcut on Android, where the launcher entry
+  itself only shows values compiled into the build.
+* Android home-screen shortcut: `setShortcutIdentity()`,
+  `getShortcutIdentity()` and `removeShortcutIdentity()` carry any name and
+  any image (asset, variant or downloaded `RemoteIcon`). The user is asked
+  once (Android 8+, API 26); later changes are silent. New
+  `IconShiftCapabilities.shortcut`, `IdentityScope.launcherShortcut`,
+  `ShortcutIdentityState` and `IconShiftOperation.setShortcutIdentity`.
 * `IconShift.displayNameListenable` for binding `MaterialApp.title`, which
   otherwise overwrites the Android recent-apps label and web title.
 

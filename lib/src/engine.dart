@@ -15,6 +15,7 @@ import 'models/identity_variant.dart';
 import 'models/preview.dart';
 import 'models/remote_icon.dart';
 import 'models/result.dart';
+import 'models/shortcut_identity.dart';
 import 'models/state.dart';
 import 'models/validation.dart';
 import 'platform/http_fetch.dart';
@@ -275,6 +276,205 @@ class IconShiftEngine {
       return _result(IconShiftOperation.setRemoteIcon, icon, name);
     });
   }
+
+  /// Shows [name] and an icon on a home-screen shortcut IconShift owns —
+  /// the one launcher entry whose name and image may be chosen while the app
+  /// runs (Android). The first call asks the user to place it; later calls
+  /// update it silently.
+  ///
+  /// The icon comes from [remoteIcon] (downloaded), [icon] (an asset) or the
+  /// icon of [variant]; the name from [name] or that variant's name.
+  Future<IconShiftResult> setShortcutIdentity({
+    String? variant,
+    String? name,
+    AppIcon? icon,
+    RemoteIcon? remoteIcon,
+  }) {
+    _requireInitialized();
+    if (variant != null) _requireVariant(variant);
+    if (name != null) _requireValidName(name);
+    if (variant == null && name == null && icon == null && remoteIcon == null) {
+      throw const InvalidArgumentException(
+        'setShortcutIdentity needs a name, an icon, a remoteIcon or a '
+        'variant.',
+      );
+    }
+
+    return _serialize(() async {
+      final label =
+          name ??
+          remoteIcon?.name ??
+          (variant == null ? null : _resolve(variant).name);
+      final source = await _shortcutIcon(
+        variant: variant,
+        icon: icon,
+        remoteIcon: remoteIcon,
+      );
+      if (source.error case final failure?) {
+        return _result(
+          IconShiftOperation.setShortcutIdentity,
+          failure,
+          _skippedAfterIconFailure,
+        );
+      }
+
+      OperationOutcome outcome;
+      if (!_capabilities.shortcut.isSupported) {
+        outcome = OperationOutcome.unsupported(
+          _capabilities.shortcut.limitation ??
+              'Home-screen shortcuts are not available on '
+                  '${_platformName()}.',
+        );
+      } else {
+        try {
+          outcome = _outcomeFromNative(
+            await platform.setShortcut(
+              NativeShortcutRequest(
+                name: label,
+                bytes: source.bytes,
+                iconKey: source.key,
+              ),
+            ),
+          );
+        } on Object catch (e) {
+          outcome = _outcomeFromError(e);
+        }
+      }
+      // One shortcut carries both, so both report the same outcome.
+      return _result(
+        IconShiftOperation.setShortcutIdentity,
+        source.key == null ? const OperationOutcome.notRequested() : outcome,
+        label == null ? const OperationOutcome.notRequested() : outcome,
+      );
+    });
+  }
+
+  /// The home-screen shortcut as the launcher shows it now.
+  Future<ShortcutIdentityState> getShortcutIdentity() async {
+    _requireInitialized();
+    try {
+      return await platform.getShortcutState();
+    } on Object catch (e) {
+      debugPrint('IconShift: could not read the shortcut state: $e');
+      return ShortcutIdentityState(
+        limitation: _capabilities.shortcut.limitation ?? '$e',
+      );
+    }
+  }
+
+  /// Disables the shortcut. Only the user can take it off the home screen.
+  Future<IconShiftResult> removeShortcutIdentity(String message) {
+    _requireInitialized();
+    return _serialize(() async {
+      OperationOutcome outcome;
+      try {
+        outcome = _outcomeFromNative(await platform.disableShortcut(message));
+      } on Object catch (e) {
+        outcome = _outcomeFromError(e);
+      }
+      return _result(IconShiftOperation.setShortcutIdentity, outcome, outcome);
+    });
+  }
+
+  /// Applies [name] and an icon in the strongest way this platform allows:
+  /// the app's own identity where arbitrary values are accepted (macOS,
+  /// Windows, Linux, web), a home-screen shortcut on Android, and the
+  /// preconfigured variant on iOS (where the name cannot change at all).
+  Future<IconShiftResult> setArbitraryIdentity({
+    String? variant,
+    String? name,
+    AppIcon? icon,
+    RemoteIcon? remoteIcon,
+  }) async {
+    _requireInitialized();
+    if (variant != null) _requireVariant(variant);
+    if (name != null) _requireValidName(name);
+
+    // Android: the app entry only shows compiled-in values (its arbitrary
+    // name reaches the recent-apps screen, not the launcher), a shortcut any.
+    if (_capabilities.shortcut.isSupported &&
+        !_capabilities.icon.acceptsArbitraryValues) {
+      return setShortcutIdentity(
+        variant: variant,
+        name: name,
+        icon: icon,
+        remoteIcon: remoteIcon,
+      );
+    }
+    if (remoteIcon != null) {
+      final result = await setRemoteIcon(
+        name == null ? remoteIcon : remoteIcon.withName(name),
+      );
+      if (name == null || result.displayName.isSuccessful) return result;
+    }
+    if (variant == null && name == null) {
+      throw const InvalidArgumentException(
+        'setArbitraryIdentity needs a name, a variant or a remoteIcon.',
+      );
+    }
+    return setCustomIdentity(iconVariant: variant, displayName: name);
+  }
+
+  /// Icon bytes for the shortcut, with the key identifying their source.
+  Future<({Uint8List? bytes, String? key, OperationOutcome? error})>
+  _shortcutIcon({
+    String? variant,
+    AppIcon? icon,
+    RemoteIcon? remoteIcon,
+  }) async {
+    if (remoteIcon != null) {
+      final url = remoteIcon.urlFor(_systemMode());
+      try {
+        final bytes = await _fetch(url, maxBytes: maxRemoteIconBytes);
+        if (!looksLikeImage(bytes)) {
+          return (
+            bytes: null,
+            key: null,
+            error: OperationOutcome.failed(
+              IconShiftErrorCode.downloadFailed,
+              '$url did not return an image.',
+            ),
+          );
+        }
+        return (bytes: bytes, key: remoteIcon.key, error: null);
+      } on Object catch (e) {
+        return (
+          bytes: null,
+          key: null,
+          error: OperationOutcome.failed(
+            IconShiftErrorCode.downloadFailed,
+            'Could not download $url: $e',
+          ),
+        );
+      }
+    }
+
+    final asset =
+        icon ??
+        (variant == null ? null : _resolve(variant).iconFor(_systemMode()));
+    if (asset == null) return (bytes: null, key: null, error: null);
+    try {
+      final data = await _assets.load(asset.assetKey);
+      return (
+        bytes: data.buffer.asUint8List(),
+        key: asset.assetKey,
+        error: null,
+      );
+    } on Object {
+      return (
+        bytes: null,
+        key: null,
+        error: OperationOutcome.failed(
+          IconShiftErrorCode.missingAsset,
+          'Could not load icon asset "${asset.assetKey}".',
+        ),
+      );
+    }
+  }
+
+  /// The system icon appearance, or light when it is not being followed.
+  IconAppearanceMode _systemMode() =>
+      _systemAppearance?.call() ?? IconAppearanceMode.light;
 
   /// Downloads and parses the [RemoteIcon] JSON at [url].
   Future<RemoteIcon> fetchRemoteIcon(Uri url) async {

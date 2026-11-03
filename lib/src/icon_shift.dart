@@ -16,6 +16,7 @@ import 'models/identity_variant.dart';
 import 'models/preview.dart';
 import 'models/remote_icon.dart';
 import 'models/result.dart';
+import 'models/shortcut_identity.dart';
 import 'models/state.dart';
 import 'models/validation.dart';
 import 'platform/icon_shift_platform_interface.dart';
@@ -148,6 +149,79 @@ abstract final class IconShift {
   @useResult
   static Future<IconShiftResult> setRemoteIcon(RemoteIcon icon) =>
       _require.setRemoteIcon(icon);
+
+  /// Shows [name] and an icon in the strongest way the platform allows,
+  /// so one call changes the visible identity everywhere:
+  ///
+  /// | Platform | What it changes |
+  /// | --- | --- |
+  /// | macOS, Windows, Linux | Dock/taskbar icon and window title |
+  /// | Web | favicon and document title |
+  /// | Android | a home-screen shortcut with exactly this name and icon (the app entry itself can only show values compiled into the build) |
+  /// | iOS | the icon of [variant]; the name cannot change at runtime at all |
+  ///
+  /// On Android the first call shows the system's "add to home screen"
+  /// dialog; after the user accepts once, every later call is silent. Use
+  /// [setShortcutIdentity] directly when you want that behaviour
+  /// explicitly, and [getCapabilities] to know what will happen
+  /// ([IconShiftCapabilities.canShowArbitraryIdentity]).
+  @useResult
+  static Future<IconShiftResult> setArbitraryIdentity({
+    String? variant,
+    String? name,
+    AppIcon? icon,
+    RemoteIcon? remoteIcon,
+  }) => _require.setArbitraryIdentity(
+    variant: variant,
+    name: name,
+    icon: icon,
+    remoteIcon: remoteIcon,
+  );
+
+  /// Puts [name] and an icon on a home-screen shortcut IconShift owns, the
+  /// only launcher entry whose name and image can be chosen while the app
+  /// runs (Android 8+ with a launcher that supports pinning).
+  ///
+  /// ```dart
+  /// await IconShift.setShortcutIdentity(
+  ///   name: 'Work Notes',
+  ///   icon: AppIcon.asset('assets/icons/work.png'),
+  /// );
+  /// // or straight from a server:
+  /// await IconShift.setShortcutIdentity(remoteIcon: icon, name: icon.name);
+  /// ```
+  ///
+  /// The icon comes from [remoteIcon] (downloaded), [icon] (a bundled asset)
+  /// or the icon of [variant]; the name from [name], else the remote icon's
+  /// or that variant's name. The first call asks the user to place the
+  /// shortcut (the result is then `pending`); later calls update it with no
+  /// dialog. The shortcut is an **extra** entry: the app's own name and icon
+  /// in the app drawer and settings stay as built.
+  @useResult
+  static Future<IconShiftResult> setShortcutIdentity({
+    String? variant,
+    String? name,
+    AppIcon? icon,
+    RemoteIcon? remoteIcon,
+  }) => _require.setShortcutIdentity(
+    variant: variant,
+    name: name,
+    icon: icon,
+    remoteIcon: remoteIcon,
+  );
+
+  /// The home-screen shortcut as the launcher shows it: whether it is
+  /// supported, whether the user placed it, and its current name and icon.
+  static Future<ShortcutIdentityState> getShortcutIdentity() =>
+      _require.getShortcutIdentity();
+
+  /// Disables the shortcut, showing [message] when it is tapped. No app may
+  /// take a shortcut off the home screen; only the user can.
+  /// [setShortcutIdentity] enables it again.
+  @useResult
+  static Future<IconShiftResult> removeShortcutIdentity({
+    String message = 'This shortcut is no longer available.',
+  }) => _require.removeShortcutIdentity(message);
 
   /// Downloads the [RemoteIcon] JSON at [url] (https only). Throws
   /// [InvalidArgumentException] when it cannot be fetched or parsed.

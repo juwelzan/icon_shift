@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import '../config/platform.dart';
 import '../models/application_info.dart';
 import '../models/capabilities.dart';
+import '../models/shortcut_identity.dart';
 import '../models/validation.dart';
 import 'icon_shift_platform_interface.dart';
 import 'version_json.dart';
@@ -66,6 +67,35 @@ class MethodChannelIconShift extends IconShiftPlatformInterface {
     };
     return NativeInspection(issues: issues, info: info);
   }
+
+  @override
+  Future<ShortcutIdentityState> getShortcutState() async =>
+      ShortcutIdentityState.fromMap(
+        await methodChannel.invokeMapMethod<Object?, Object?>(
+              'getShortcutState',
+            ) ??
+            const {},
+      );
+
+  @override
+  Future<NativeOperationResult> setShortcut(
+    NativeShortcutRequest request,
+  ) async => NativeOperationResult.fromMap(
+    await methodChannel.invokeMapMethod<Object?, Object?>('setShortcut', {
+      'name': request.name,
+      'bytes': request.bytes,
+      'iconKey': request.iconKey,
+    }),
+  );
+
+  @override
+  Future<NativeOperationResult> disableShortcut(String message) async =>
+      NativeOperationResult.fromMap(
+        await methodChannel.invokeMapMethod<Object?, Object?>(
+          'disableShortcut',
+          {'message': message},
+        ),
+      );
 
   @override
   Future<Map<String, String>> loadSelection() async {

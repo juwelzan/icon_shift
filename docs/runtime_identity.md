@@ -130,6 +130,54 @@ name. `setDisplayName` and variant names therefore return `unsupported`
 Info.plist and each `names:` translation into `<lang>.lproj/InfoPlist.strings`
 (registered in the Xcode project). Rebuild and reinstall to see it.
 
+## Any name and icon at runtime
+
+`setDisplayName` and `setIdentity` are bound by what each OS allows for the
+**app's own** entry. For a name and image chosen while the app runs — typed
+by the user, or sent by a server — use one call that picks the strongest
+mechanism the platform has:
+
+```dart
+final r = await IconShift.setArbitraryIdentity(
+  name: 'Work Notes',
+  icon: AppIcon.asset('assets/icons/work.png'),   // or remoteIcon: …
+);
+```
+
+| Platform | What changes |
+| --- | --- |
+| macOS, Windows, Linux | Dock/taskbar icon and window title of the app itself |
+| Web | favicon and document title |
+| Android | a **home-screen shortcut** with exactly that name and icon |
+| iOS | the icon of `variant`; the name cannot change at runtime at all |
+
+### Android home-screen shortcut
+
+The app's launcher entry shows the label and icon compiled into the build, so
+IconShift places a shortcut instead — the same mechanism the "icon changer"
+apps use:
+
+```dart
+await IconShift.setShortcutIdentity(name: 'Work Notes', variant: 'dark');
+final state = await IconShift.getShortcutIdentity();
+// state.isSupported / isPinned / name / iconKey
+await IconShift.removeShortcutIdentity();
+```
+
+* Needs Android 8.0 (API 26) and a launcher that supports pinning;
+  `IconShiftCapabilities.shortcut` reports both, with the reason when not.
+* The **first** call shows the system's "add to home screen" dialog, so the
+  outcome is `pending`; call `getShortcutIdentity()` afterwards to see
+  whether the user accepted. Every later call updates the pinned shortcut
+  silently (`applied`), with no dialog and no limit.
+* The icon may be a bundled asset, a variant's icon or a downloaded
+  [`RemoteIcon`](#remote-icons) — any image, no rebuild.
+* It is an **extra** entry: the app drawer and settings keep the built-in
+  name and icon. No app can take a pinned shortcut off the home screen;
+  `removeShortcutIdentity()` disables it (greyed out) and
+  `setShortcutIdentity()` enables it again.
+* A few launchers only pick up a new label or icon after a reboot.
+
 ## Remote icons
 
 ```dart

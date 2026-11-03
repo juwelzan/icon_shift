@@ -14,6 +14,8 @@ data class AliasInfo(
     val enabledInManifest: Boolean,
     /** Set for variants removed in an update: the variant that replaces it. */
     val retiredTo: String? = null,
+    /** Class the alias points at (the real activity), if the OS reports it. */
+    val targetActivity: String? = null,
 )
 
 /** Reads and changes the app's IconShift activity-aliases. */
@@ -45,6 +47,10 @@ class AliasRegistry(private val context: Context) {
                 label = activity.loadLabel(pm).toString(),
                 enabledInManifest = activity.enabled,
                 retiredTo = activity.metaData?.getString(META_RETIRED_TO),
+                // A manifest may abbreviate it as ".MainActivity".
+                targetActivity = activity.targetActivity?.let {
+                    if (it.startsWith(".")) packageName + it else it
+                },
             )
         }
     }

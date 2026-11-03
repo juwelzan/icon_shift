@@ -29,6 +29,7 @@ class IconShiftPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
     private lateinit var channel: MethodChannel
     private lateinit var context: Context
     private lateinit var registry: AliasRegistry
+    private lateinit var shortcut: ShortcutIdentity
     private var activity: Activity? = null
 
     /** Name from setDisplayName; null shows the active alias label. */
@@ -37,6 +38,7 @@ class IconShiftPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         context = binding.applicationContext
         registry = AliasRegistry(context)
+        shortcut = ShortcutIdentity(context)
         channel = MethodChannel(binding.binaryMessenger, "icon_shift")
         channel.setMethodCallHandler(this)
         recoverLauncherEntry()
@@ -140,6 +142,21 @@ class IconShiftPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
                 "getNativeState" -> result.success(nativeState())
                 "setIcon" -> setIcon(call.argument<String>("key"), result)
                 "setDisplayName" -> setDisplayName(call.argument<String>("name"), result)
+                "getShortcutState" -> result.success(shortcut.state())
+                "setShortcut" -> report(
+                    shortcut.set(
+                        call.argument<String>("name"),
+                        call.argument<ByteArray>("bytes"),
+                        call.argument<String>("iconKey"),
+                    ),
+                    result,
+                )
+                "disableShortcut" -> report(
+                    shortcut.disable(
+                        call.argument<String>("message") ?: "This shortcut is no longer available.",
+                    ),
+                    result,
+                )
                 "inspect" -> result.success(inspect(call.argument<List<Map<String, Any?>>>("variants").orEmpty()))
                 "getApplicationInfo" -> result.success(applicationInfo())
                 "loadSelection" -> result.success(SelectionStore(context).load())
@@ -154,6 +171,12 @@ class IconShiftPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
         } catch (e: Exception) {
             result.error("native_failure", e.message ?: e.toString(), null)
         }
+    }
+
+    private fun report(outcome: ShortcutResult, result: Result) = when (outcome) {
+        is ShortcutResult.Ok ->
+            result.success(mapOf("status" to outcome.status, "message" to outcome.message))
+        is ShortcutResult.Failed -> result.error(outcome.code, outcome.message, null)
     }
 
     private fun capabilities(): Map<String, Any?> {
@@ -184,6 +207,14 @@ class IconShiftPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
                 "acceptsArbitraryValues" to true,
                 "limitation" to "Any name is shown in the recent-apps screen. The launcher label changes " +
                     "only with setIdentity(), to the label compiled into the variant's activity-alias.",
+            ),
+            "shortcut" to mapOf(
+                "supported" to (shortcut.state()["supported"] == true),
+                "scope" to "launcherShortcut",
+                "persistsNatively" to true,
+                "requiresPreconfiguredResources" to false,
+                "acceptsArbitraryValues" to true,
+                "limitation" to shortcut.limitation(),
             ),
             "iconAndNameLinked" to true,
             "notes" to listOf(

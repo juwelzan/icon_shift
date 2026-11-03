@@ -16,6 +16,7 @@ export 'src/models/preview.dart';
 export 'src/models/remote_icon.dart'
     show RemoteIcon, checkRemoteIconUrl, maxRemoteIconBytes;
 export 'src/models/result.dart';
+export 'src/models/shortcut_identity.dart';
 export 'src/models/state.dart';
 export 'src/models/validation.dart';
 export 'src/theme_sync.dart';
