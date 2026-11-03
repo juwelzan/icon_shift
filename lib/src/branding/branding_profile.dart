@@ -6,33 +6,93 @@ import '../exceptions.dart';
 import '../models/remote_icon.dart' show checkRemoteIconUrl;
 import '../validation/config_validator.dart' show displayNameProblem;
 
-/// The branding one institution (tenant) publishes: the name, logo and
-/// colours the app shows while that institution is selected.
+/// Which keys of a branding response map onto [BrandingProfile].
 ///
-/// Parsed from a server response. The shape of the DigiEdu / Schoolmate
-/// bootstrap endpoint `GET <school host>/api/v1/branding` is the default:
+/// The defaults accept the names most back ends use, so a typical JSON API
+/// needs no mapping. Give your own lists when the field names differ:
+///
+/// ```dart
+/// const BrandingFieldMap(
+///   envelope: 'result',
+///   appName: ['title'],
+///   launcherIconUrl: ['icon'],
+/// );
+/// ```
+///
+/// Each list is tried in order; the first non-empty string wins.
+@immutable
+class BrandingFieldMap {
+  const BrandingFieldMap({
+    this.envelope = 'data',
+    this.appName = const ['app_name', 'name'],
+    this.institutionName = const ['institution_name'],
+    this.logoUrl = const ['logo_url', 'logo'],
+    this.launcherIconUrl = const [
+      'launcher_icon_url',
+      'icon_url',
+      'favicon_url',
+    ],
+    this.primaryColor = const ['primary_color'],
+    this.secondaryColor = const ['secondary_color'],
+    this.code = const ['app_code', 'institution_id', 'tenant_id'],
+    this.version = const ['branding_version', 'version'],
+  });
+
+  /// Key holding the payload when the API wraps it, e.g. `{"data": {…}}`.
+  /// A response without it is read directly. Pass `null` for no envelope.
+  final String? envelope;
+
+  final List<String> appName;
+  final List<String> institutionName;
+  final List<String> logoUrl;
+
+  /// Keys that may carry an image meant for the launcher icon or favicon.
+  final List<String> launcherIconUrl;
+
+  final List<String> primaryColor;
+  final List<String> secondaryColor;
+
+  /// Short code or id the server assigns to the tenant.
+  final List<String> code;
+
+  /// Server-side branding version, when it sends one.
+  final List<String> version;
+
+  /// Every key this map claims; the rest lands in [BrandingProfile.extras].
+  Set<String> get knownKeys => {
+    ...appName,
+    ...institutionName,
+    ...logoUrl,
+    ...launcherIconUrl,
+    ...primaryColor,
+    ...secondaryColor,
+    ...code,
+    ...version,
+  };
+}
+
+/// The branding one tenant publishes: the name, logo and colours the app
+/// shows while that tenant is selected.
+///
+/// Parsed from whatever a [BrandingProvider] returns. A typical response:
 ///
 /// ```json
 /// {
 ///   "data": {
-///     "app_name": "Amena Baki Residential Model School and College",
-///     "logo_url": null,
-///     "favicon_url": null,
-///     "primary_color": "#1e40af",
-///     "secondary_color": "#3b82f6",
-///     "app_code": "588846"
-///   },
-///   "message": "Branding retrieved successfully."
+///     "app_name": "ABC School",
+///     "logo_url": "https://cdn.example.com/abc/logo.png",
+///     "launcher_icon_url": "https://cdn.example.com/abc/icon.png",
+///     "primary_color": "#2563EB",
+///     "secondary_color": "#4F46E5",
+///     "institution_id": "school_123"
+///   }
 /// }
 /// ```
 ///
-/// A `data` envelope is unwrapped automatically, and these aliases are
-/// accepted so other back ends need no adapter: `institution_name`/`name`,
-/// `launcher_icon_url`/`icon_url`, `institution_id`/`tenant_id`,
-/// `branding_version`/`version`.
-///
-/// Every field is optional: a server that only sends a name still produces a
-/// usable profile, and the rest falls back to the app's own branding.
+/// [BrandingFieldMap] controls which keys are read, so no particular back
+/// end is baked in. Every field is optional: a server that only sends a name
+/// still produces a usable profile, and the rest falls back to the app's own
+/// branding.
 @immutable
 class BrandingProfile {
   const BrandingProfile({
@@ -100,6 +160,7 @@ class BrandingProfile {
   factory BrandingProfile.parse(
     Object? json, {
     required String tenantId,
+    BrandingFieldMap fields = const BrandingFieldMap(),
     bool strict = false,
   }) {
     if (json is! Map) {
@@ -107,7 +168,7 @@ class BrandingProfile {
         'A branding response must be a JSON object.',
       );
     }
-    final envelope = json['data'];
+    final envelope = fields.envelope == null ? null : json[fields.envelope];
     final map = <String, Object?>{
       for (final MapEntry(:key, :value)
           in (envelope is Map ? envelope : json).entries)
@@ -168,43 +229,26 @@ class BrandingProfile {
       return argb;
     }
 
-    const known = {
-      'app_name',
-      'institution_name',
-      'name',
-      'logo_url',
-      'logo',
-      'launcher_icon_url',
-      'icon_url',
-      'favicon_url',
-      'primary_color',
-      'secondary_color',
-      'app_code',
-      'institution_id',
-      'tenant_id',
-      'branding_version',
-      'version',
-    };
-
+    final known = fields.knownKeys;
     final profile = BrandingProfile(
       tenantId: tenantId,
-      appName: name(['app_name', 'name']),
-      institutionName: name(['institution_name']),
-      logoUrl: url(['logo_url', 'logo']),
+      appName: name(fields.appName),
+      institutionName: name(fields.institutionName),
+      logoUrl: url(fields.logoUrl),
       // A favicon is the closest thing to a launcher icon when the server
       // sends no dedicated one.
-      launcherIconUrl: url(['launcher_icon_url', 'icon_url', 'favicon_url']),
-      primaryColor: color(['primary_color']),
-      secondaryColor: color(['secondary_color']),
-      appCode: pick(['app_code', 'institution_id', 'tenant_id']),
-      version: pick(['branding_version', 'version']),
+      launcherIconUrl: url(fields.launcherIconUrl),
+      primaryColor: color(fields.primaryColor),
+      secondaryColor: color(fields.secondaryColor),
+      appCode: pick(fields.code),
+      version: pick(fields.version),
       extras: {
         for (final MapEntry(:key, :value) in map.entries)
           if (!known.contains(key)) key: value,
       },
     );
-    // The DigiEdu endpoint sends no version and no ETag
-    // (cache-control: no-cache), so derive one from the content.
+    // Many endpoints send neither a version nor an ETag, so derive one from
+    // the content; unchanged branding is then never re-applied.
     return profile.version != null
         ? profile
         : profile.copyWith(version: contentVersion(profile));
@@ -214,6 +258,7 @@ class BrandingProfile {
   factory BrandingProfile.decode(
     String source, {
     required String tenantId,
+    BrandingFieldMap fields = const BrandingFieldMap(),
     bool strict = false,
   }) {
     final Object? json;
@@ -222,7 +267,12 @@ class BrandingProfile {
     } on FormatException catch (e) {
       throw InvalidArgumentException('Branding JSON is invalid: ${e.message}');
     }
-    return BrandingProfile.parse(json, tenantId: tenantId, strict: strict);
+    return BrandingProfile.parse(
+      json,
+      tenantId: tenantId,
+      fields: fields,
+      strict: strict,
+    );
   }
 
   BrandingProfile copyWith({String? version}) => BrandingProfile(

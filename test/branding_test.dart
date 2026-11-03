@@ -7,7 +7,7 @@ import 'package:icon_shift/src/engine.dart';
 
 import 'fakes.dart';
 
-/// The live DigiEdu / Schoolmate bootstrap response, verbatim.
+/// A real response from a tenant server (DigiEdu/Schoolmate), verbatim.
 const digiEduResponse = '''
 {"data":{"app_name":"Amena Baki Residential Model School and College",
 "logo_url":null,"favicon_url":null,"primary_color":"#1e40af",
@@ -33,8 +33,23 @@ String responseFor(
   'message': 'Branding retrieved successfully.',
 });
 
-BrandingTenant tenantFor(String host) =>
-    BrandingTenant(host: Uri.parse('https://$host.digiedu.online'));
+/// A provider for one tenant, backed by [body].
+BrandingProvider providerFor(
+  String host, {
+  String? body,
+  List<String>? seen,
+  Object? error,
+}) => CallbackBrandingProvider(
+  tenantId: '$host.digiedu.online',
+  fetch: () async {
+    seen?.add(host);
+    if (error != null) throw error;
+    return BrandingProfile.decode(
+      body ?? responseFor('School $host.digiedu.online', code: host),
+      tenantId: '$host.digiedu.online',
+    );
+  },
+);
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -172,7 +187,6 @@ void main() {
     final requests = <Uri>[];
 
     Future<BrandingController> controller({
-      BrandingFetcher? fetch,
       BrandingProfile? defaultBranding,
       Map<String, String>? selection,
     }) async {
@@ -186,40 +200,19 @@ void main() {
       return BrandingController(
         engine: engine,
         defaultBranding: defaultBranding,
-        fetch:
-            fetch ??
-            (tenant) async {
-              requests.add(tenant.url);
-              return responseFor('School ${tenant.id}', code: tenant.id);
-            },
       );
     }
 
     setUp(requests.clear);
-
-    test('the tenant host becomes the bootstrap endpoint', () {
-      final tenant = tenantFor('abc');
-      expect(tenant.id, 'abc.digiedu.online');
-      expect(
-        tenant.url,
-        Uri.parse('https://abc.digiedu.online/api/v1/branding'),
-      );
-      expect(
-        () => BrandingTenant(host: Uri.parse('http://abc.example.com')),
-        throwsA(isA<InvalidArgumentException>()),
-        reason: 'plain http would expose the school host',
-      );
-    });
 
     test('loads, caches and reports live branding', () async {
       final c = await controller();
       expect(c.value.status, BrandingStatus.idle);
       expect(c.profile.isEmpty, isTrue);
 
-      final state = await c.load(tenantFor('abc'));
+      final state = await c.load(providerFor('abc'));
       expect(state.status, BrandingStatus.live);
       expect(state.profile.appName, 'School abc.digiedu.online');
-      expect(requests, hasLength(1));
       // Cached under the tenant, so the next launch starts branded.
       expect(platform.savedSelection['branding_tenant'], 'abc.digiedu.online');
       expect(platform.savedSelection['branding'], contains('School abc'));
@@ -227,20 +220,25 @@ void main() {
 
     test('a cached school shows before the network answers', () async {
       var c = await controller();
-      await c.load(tenantFor('abc'));
+      await c.load(providerFor('abc'));
       final saved = platform.savedSelection;
 
       final seen = <BrandingStatus>[];
-      c = await controller(
-        selection: saved,
-        fetch: (tenant) async {
-          // The cached branding must already be on screen by now.
-          expect(seen, contains(BrandingStatus.cached));
-          return responseFor('School abc renamed');
-        },
-      );
+      c = await controller(selection: saved);
       c.addListener(() => seen.add(c.value.status));
-      final state = await c.load(tenantFor('abc'));
+      final state = await c.load(
+        CallbackBrandingProvider(
+          tenantId: 'abc.digiedu.online',
+          fetch: () async {
+            // The cached branding must already be on screen by now.
+            expect(seen, contains(BrandingStatus.cached));
+            return BrandingProfile.decode(
+              responseFor('School abc renamed'),
+              tenantId: 'abc.digiedu.online',
+            );
+          },
+        ),
+      );
       expect(seen.first, BrandingStatus.cached);
       expect(state.status, BrandingStatus.live);
       expect(state.profile.appName, 'School abc renamed');
@@ -248,14 +246,13 @@ void main() {
 
     test('offline keeps the cached branding and never throws', () async {
       var c = await controller();
-      await c.load(tenantFor('abc'));
+      await c.load(providerFor('abc'));
       final saved = platform.savedSelection;
 
-      c = await controller(
-        selection: saved,
-        fetch: (_) async => throw Exception('SocketException'),
+      c = await controller(selection: saved);
+      final state = await c.load(
+        providerFor('abc', error: Exception('SocketException')),
       );
-      final state = await c.load(tenantFor('abc'));
       expect(state.status, BrandingStatus.offline);
       expect(state.profile.appName, 'School abc.digiedu.online');
       expect(state.error, contains('SocketException'));
@@ -265,18 +262,27 @@ void main() {
       final c = await controller(
         defaultBranding: const BrandingProfile(
           tenantId: 'default',
-          appName: 'Schoolmate',
+          appName: 'My App',
         ),
-        fetch: (_) async => throw Exception('no network'),
       );
-      final state = await c.load(tenantFor('abc'));
+      final state = await c.load(
+        providerFor('abc', error: Exception('no network')),
+      );
       expect(state.status, BrandingStatus.offline);
-      expect(state.profile.appName, 'Schoolmate');
+      expect(state.profile.appName, 'My App');
     });
 
     test('a malformed answer keeps the previous branding', () async {
-      final c = await controller(fetch: (_) async => '<html>503</html>');
-      final state = await c.load(tenantFor('abc'));
+      final c = await controller();
+      final state = await c.load(
+        CallbackBrandingProvider(
+          tenantId: 'abc.digiedu.online',
+          fetch: () async => BrandingProfile.decode(
+            '<html>503</html>',
+            tenantId: 'abc.digiedu.online',
+          ),
+        ),
+      );
       expect(state.status, BrandingStatus.invalid);
       expect(state.profile.isEmpty, isTrue);
       expect(platform.savedSelection.containsKey('branding'), isFalse);
@@ -287,8 +293,8 @@ void main() {
       final c = await controller();
       c.addListener(() => seen.add(c.value.profile.appName));
 
-      await c.load(tenantFor('abc'));
-      await c.load(tenantFor('xyz'));
+      await c.load(providerFor('abc'));
+      await c.load(providerFor('xyz'));
 
       expect(c.profile.appName, 'School xyz.digiedu.online');
       expect(platform.savedSelection['branding_tenant'], 'xyz.digiedu.online');
@@ -306,7 +312,7 @@ void main() {
 
     test('another school cannot read a cached profile', () async {
       final c = await controller();
-      await c.load(tenantFor('abc'));
+      await c.load(providerFor('abc'));
       expect(engine.readBranding('abc.digiedu.online'), isNotNull);
       expect(
         engine.readBranding('xyz.digiedu.online'),
@@ -317,38 +323,37 @@ void main() {
 
     test('clear() forgets the school and its cache', () async {
       final c = await controller();
-      await c.load(tenantFor('abc'));
+      await c.load(providerFor('abc'));
       await c.clear();
-      expect(c.tenant, isNull);
+      expect(c.provider, isNull);
+      expect(c.tenantId, isNull);
       expect(c.value.status, BrandingStatus.idle);
       expect(platform.savedSelection.containsKey('branding'), isFalse);
       expect(platform.savedSelection.containsKey('branding_tenant'), isFalse);
     });
 
     test('unchanged branding does not rewrite the cache', () async {
-      var writes = 0;
-      final c = await controller(
-        fetch: (tenant) async {
-          writes++;
-          return responseFor('Same School');
-        },
+      final fetches = <String>[];
+      final c = await controller();
+      final provider = providerFor(
+        'abc',
+        body: responseFor('Same School'),
+        seen: fetches,
       );
-      await c.load(tenantFor('abc'));
+      await c.load(provider);
       final afterFirst = platform.savedSelection['branding'];
       await c.refresh();
-      expect(writes, 2, reason: 'refresh really asks the server');
+      expect(fetches, hasLength(2), reason: 'refresh really asks again');
       expect(platform.savedSelection['branding'], afterFirst);
       expect(c.value.status, BrandingStatus.live);
     });
 
     test('concurrent loads make one request', () async {
       final c = await controller();
-      await Future.wait([
-        c.load(tenantFor('abc')),
-        c.load(tenantFor('abc')),
-        c.load(tenantFor('abc')),
-      ]);
-      expect(requests, hasLength(1));
+      final fetches = <String>[];
+      final provider = providerFor('abc', seen: fetches);
+      await Future.wait([c.load(provider), c.load(provider), c.load(provider)]);
+      expect(fetches, hasLength(1));
     });
 
     test('a saved cache from another school is ignored', () async {
@@ -357,9 +362,10 @@ void main() {
           'branding_tenant': 'other.digiedu.online',
           'branding': responseFor('Other School'),
         },
-        fetch: (_) async => throw Exception('offline'),
       );
-      final state = await c.load(tenantFor('abc'));
+      final state = await c.load(
+        providerFor('abc', error: Exception('offline')),
+      );
       expect(state.profile.appName, isNot('Other School'));
       expect(state.profile.isEmpty, isTrue);
     });
@@ -376,17 +382,21 @@ void main() {
             Uint8List.fromList([0x89, 0x50, 0x4E, 0x47]),
       );
       await engine.initialize(demoConfig);
-      final c = BrandingController(
-        engine: engine,
-        fetch: (t) async => responseFor(
-          'ABC School',
-          favicon: 'https://cdn.example.com/abc.png',
+      final c = BrandingController(engine: engine);
+      await c.load(
+        providerFor(
+          'abc',
+          body: responseFor(
+            'ABC School',
+            favicon: 'https://cdn.example.com/abc.png',
+          ),
         ),
       );
-      await c.load(tenantFor('abc'));
 
-      final result = await c.applyLauncherBranding();
-      expect(result.isComplete, isTrue, reason: '$result');
+      final report = await c.applyLauncherBranding();
+      expect(report.scope, NativeBrandingScope.applied);
+      expect(report.isApplied, isTrue);
+      expect(report.needsBuild, isFalse);
       expect(platform.displayName, 'ABC School');
       expect(platform.iconRequests.last.key, startsWith('remote:'));
     });
@@ -399,16 +409,22 @@ void main() {
         assetBundle: FakeAssetBundle(demoAssets),
       );
       await engine.initialize(demoConfig);
-      final c = BrandingController(
-        engine: engine,
-        fetch: (t) async => responseFor('ABC School'),
-      );
-      await c.load(tenantFor('abc'));
+      final c = BrandingController(engine: engine);
+      await c.load(providerFor('abc', body: responseFor('ABC School')));
 
-      final result = await c.applyLauncherBranding(fallbackVariant: 'dark');
+      final report = await c.applyLauncherBranding(fallbackVariant: 'dark');
       expect(platform.iconKey, 'dark', reason: 'a bundled icon still applies');
-      expect(result.displayName.status, OperationStatus.unsupported);
-      expect(result.displayName.errorCode, IconShiftErrorCode.buildRequired);
+      expect(
+        report.scope,
+        NativeBrandingScope.requiresBuild,
+        reason: 'iOS cannot show a runtime name: $report',
+      );
+      expect(report.needsBuild, isTrue);
+      expect(report.message, contains('icon_shift_cli'));
+      expect(
+        report.result.displayName.errorCode,
+        IconShiftErrorCode.buildRequired,
+      );
     });
   });
 }

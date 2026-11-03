@@ -49,6 +49,17 @@ Runtime (`icon_shift`):
 
 Build time (`icon_shift_cli`):
 
+* `brand`: an automated white-label build engine. It fetches one
+  institution's branding from its own host, validates it, downloads the
+  logo, generates the Android and iOS launcher name, icon and ids, runs
+  `flutter build`, reads the finished artifact back (`aapt2 dump badging`,
+  `Info.plist`) and fails when the name or id does not match, collects the
+  artifact plus a `build.json` record, and restores the shared codebase. See
+  `docs/multi_tenant_branding.md`.
+* Fix: `identity --apply` could not find a string resource that `generate`
+  was about to write in the same plan, so an `@string/` application label
+  failed with "no res/values/*.xml defines …".
+
 * `appearances: {dark, tinted, clear}` on identities; `clear` on
   `platforms.ios` / `platforms.macos`; `dark` on desktop/web overrides.
   iOS icon sets get dark/tinted; the generated Dart config carries all of

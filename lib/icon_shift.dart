@@ -3,8 +3,9 @@
 library;
 
 export 'src/branding/branding_controller.dart';
+export 'src/branding/branding_provider.dart';
 export 'src/branding/branding_profile.dart'
-    show BrandingProfile, hexColor, parseHexColor;
+    show BrandingFieldMap, BrandingProfile, hexColor, parseHexColor;
 export 'src/config/app_identity.dart';
 export 'src/config/icon_shift_config.dart';
 export 'src/config/platform.dart';

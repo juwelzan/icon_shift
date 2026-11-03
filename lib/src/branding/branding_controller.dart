@@ -6,49 +6,55 @@ import 'package:flutter/foundation.dart';
 import '../engine.dart';
 import '../models/remote_icon.dart';
 import '../models/result.dart';
+import '../exceptions.dart';
 import '../platform/http_fetch.dart';
 import 'branding_profile.dart';
+import 'branding_provider.dart';
 
-/// Fetches the raw branding document for [tenant]. Throw to signal failure;
-/// the controller then keeps the cached or default branding.
-typedef BrandingFetcher = Future<String> Function(BrandingTenant tenant);
+/// How far native (launcher) branding got on this platform.
+enum NativeBrandingScope {
+  /// The app's own launcher entry now shows the tenant's name and icon.
+  applied,
 
-/// One institution, and where its branding comes from.
-///
-/// DigiEdu / Schoolmate gives every school its own host, so the host *is* the
-/// tenant: `https://amena-baki.digiedu.online` →
-/// `GET https://amena-baki.digiedu.online/api/v1/branding` (public, no login).
+  /// Applied to a home-screen shortcut beside the app, because the app's
+  /// own entry only shows what the build compiled in (Android).
+  shortcut,
+
+  /// The OS only shows values compiled into the app: produce a branded
+  /// build for this tenant (`icon_shift_cli brand`).
+  requiresBuild,
+
+  /// This platform has no launcher identity IconShift can change.
+  unsupported,
+}
+
+/// What applying branding to the launcher actually achieved, so an app can
+/// tell the difference between "done" and "needs a branded build".
 @immutable
-class BrandingTenant {
-  /// A tenant served from [host]. [id] defaults to the host, which is what
-  /// keeps one school's cache out of another's.
-  BrandingTenant({
-    required Uri host,
-    String? id,
-    String path = '/api/v1/branding',
-  }) : this.endpoint(
-         url: checkRemoteIconUrl(host.replace(path: path), 'host'),
-         id: id ?? host.host,
-       );
+class NativeBrandingReport {
+  const NativeBrandingReport({
+    required this.scope,
+    required this.result,
+    this.message,
+  });
 
-  /// A tenant whose branding lives at an arbitrary [url].
-  const BrandingTenant.endpoint({required this.url, required this.id});
+  final NativeBrandingScope scope;
 
-  /// Stable identifier; the cache is keyed by it.
-  final String id;
+  /// The outcome per property, with the OS's own wording.
+  final IconShiftResult result;
 
-  /// Where the branding document is fetched from.
-  final Uri url;
+  /// Why it ended there, when it is not [NativeBrandingScope.applied].
+  final String? message;
 
-  @override
-  bool operator ==(Object other) =>
-      other is BrandingTenant && other.id == id && other.url == url;
+  bool get isApplied => scope == NativeBrandingScope.applied;
+
+  /// A branded build is the only way to get this tenant's launcher
+  /// identity on this platform.
+  bool get needsBuild => scope == NativeBrandingScope.requiresBuild;
 
   @override
-  int get hashCode => Object.hash(id, url);
-
-  @override
-  String toString() => 'BrandingTenant($id → $url)';
+  String toString() =>
+      'NativeBrandingReport(${scope.name}${message == null ? '' : ': $message'})';
 }
 
 /// What happened on the last [BrandingController.load].
@@ -76,30 +82,32 @@ class BrandingState {
   const BrandingState({
     required this.profile,
     required this.status,
-    this.tenant,
+    this.tenantId,
     this.error,
   });
 
   /// Never null: the default branding until a server answers.
   final BrandingProfile profile;
   final BrandingStatus status;
-  final BrandingTenant? tenant;
+
+  /// The tenant whose branding this is, or `null` for the default.
+  final String? tenantId;
 
   /// Why the last refresh failed, if it did.
   final String? error;
 
-  bool get isDefault => tenant == null;
+  bool get isDefault => tenantId == null;
 
   @override
   bool operator ==(Object other) =>
       other is BrandingState &&
       other.profile == profile &&
       other.status == status &&
-      other.tenant == tenant &&
+      other.tenantId == tenantId &&
       other.error == error;
 
   @override
-  int get hashCode => Object.hash(profile, status, tenant, error);
+  int get hashCode => Object.hash(profile, status, tenantId, error);
 
   @override
   String toString() =>
@@ -107,27 +115,31 @@ class BrandingState {
 }
 
 /// Server-driven, multi-tenant branding: one app, one branded experience per
-/// institution.
+/// tenant.
 ///
 /// ```dart
-/// await IconShift.initialize(config);
-/// final branding = IconShift.branding;
+/// await IconShift.initialize(config, defaultBranding: appBranding);
 ///
-/// // After the user picks a school (its host identifies it):
-/// await branding.load(BrandingTenant(host: Uri.parse('https://abc.digiedu.online')));
+/// // After the user picks a tenant:
+/// await IconShift.loadBranding(
+///   HttpBrandingProvider.host(
+///     Uri.parse('https://abc.example.com'),
+///     path: '/api/v1/branding',
+///   ),
+/// );
 ///
 /// // In the UI:
 /// ValueListenableBuilder<BrandingState>(
-///   valueListenable: branding,
-///   builder: (context, state, _) => Text(state.profile.displayName ?? 'Schoolmate'),
+///   valueListenable: IconShift.branding,
+///   builder: (context, state, _) => Text(state.profile.displayName ?? 'My App'),
 /// );
 ///
-/// await branding.clear();           // logout
+/// await IconShift.branding.clear();   // logout
 /// ```
 ///
 /// [load] returns the cached branding immediately and refreshes in the
 /// background, so startup never waits for the network. The cache holds only
-/// the active institution, so switching schools cannot leak branding.
+/// the active tenant, so switching tenants cannot leak branding.
 ///
 /// Changing the **launcher** name and icon is a separate, native-limited
 /// step: see [applyLauncherBranding].
@@ -136,30 +148,24 @@ class BrandingController extends ChangeNotifier
   BrandingController({
     required IconShiftEngine engine,
     BrandingProfile? defaultBranding,
-    BrandingFetcher? fetch,
     RemoteFetcher? download,
     this.timeout = const Duration(seconds: 10),
   }) : _engine = engine,
        _default =
            defaultBranding ?? const BrandingProfile(tenantId: _defaultTenant),
-       _fetch = fetch,
        _download = download {
     _state = BrandingState(profile: _default, status: BrandingStatus.idle);
   }
 
   static const _defaultTenant = 'default';
 
-  /// Largest branding document accepted from a server.
-  static const int maxDocumentBytes = 256 * 1024;
-
   final IconShiftEngine _engine;
   final BrandingProfile _default;
-  final BrandingFetcher? _fetch;
   final RemoteFetcher? _download;
   final Duration timeout;
 
   late BrandingState _state;
-  BrandingTenant? _tenant;
+  BrandingProvider? _provider;
   Future<void>? _inFlight;
 
   @override
@@ -168,46 +174,51 @@ class BrandingController extends ChangeNotifier
   /// The branding in effect, falling back to the app's own.
   BrandingProfile get profile => _state.profile;
 
-  /// The institution whose branding is shown, or `null` for the default.
-  BrandingTenant? get tenant => _tenant;
+  /// Where the active branding comes from, or `null` for the default.
+  BrandingProvider? get provider => _provider;
 
-  /// The branding the app ships with, used when no institution is selected
-  /// and when a server has never answered.
+  /// The tenant whose branding is shown, or `null` for the default.
+  String? get tenantId => _provider?.tenantId;
+
+  /// The branding the app ships with, used when no tenant is selected and
+  /// when a provider has never answered.
   BrandingProfile get defaultBranding => _default;
 
-  /// Shows [tenant]'s branding: the cached copy at once (so the first frame
-  /// is already branded and offline start works), then the server's.
+  /// Shows the branding [provider] serves: the cached copy at once (so the
+  /// first frame is already branded and offline start works), then the
+  /// provider's.
   ///
-  /// Switching to a different institution drops the previous one's cache
-  /// first, so nothing of it can be shown. Returns when the refresh is done;
-  /// ignore the future to let it finish in the background.
+  /// Switching to a different tenant drops the previous one's cache first,
+  /// so nothing of it can be shown. Returns when the refresh is done; ignore
+  /// the future to let it finish in the background.
   ///
   /// [refresh] re-fetches even when the cached branding is current.
   Future<BrandingState> load(
-    BrandingTenant tenant, {
+    BrandingProvider provider, {
     bool refresh = false,
   }) async {
-    final switching = _tenant != null && _tenant!.id != tenant.id;
+    final tenantId = provider.tenantId;
+    final switching = _provider != null && _provider!.tenantId != tenantId;
     if (switching) await _engine.clearBranding();
-    _tenant = tenant;
+    _provider = provider;
 
     if (!switching || !refresh) {
-      final cached = _readCache(tenant);
+      final cached = _readCache(tenantId);
       if (cached != null) {
         _emit(
           BrandingState(
             profile: cached,
             status: BrandingStatus.cached,
-            tenant: tenant,
+            tenantId: tenantId,
           ),
         );
       } else if (switching) {
-        // Never keep the previous school's branding on screen.
+        // Never keep the previous tenant's branding on screen.
         _emit(
           BrandingState(
             profile: _default,
             status: BrandingStatus.idle,
-            tenant: tenant,
+            tenantId: tenantId,
           ),
         );
       }
@@ -219,7 +230,7 @@ class BrandingController extends ChangeNotifier
       await pending;
       return _state;
     }
-    final run = _refresh(tenant);
+    final run = _refresh(provider);
     _inFlight = run;
     try {
       await run;
@@ -229,35 +240,59 @@ class BrandingController extends ChangeNotifier
     return _state;
   }
 
-  /// Re-fetches the active institution's branding.
+  /// Re-fetches the active tenant's branding.
   Future<BrandingState> refresh() async {
-    final tenant = _tenant;
-    if (tenant == null) return _state;
-    return load(tenant, refresh: true);
+    final provider = _provider;
+    if (provider == null) return _state;
+    return load(provider, refresh: true);
   }
 
-  /// Forgets the institution and its cache, and goes back to the app's own
-  /// branding. Call it on logout and before another school signs in.
+  /// Shows [profile] directly and caches it, without a provider — for
+  /// branding the app already has (a push payload, a bundled file, a test).
+  Future<BrandingState> apply(BrandingProfile profile) async {
+    final current = _provider?.tenantId;
+    if (current != null && current != profile.tenantId) {
+      await _engine.clearBranding();
+    }
+    _provider = StaticBrandingProvider(profile);
+    await _engine.writeBranding(profile.tenantId, jsonEncode(profile.toJson()));
+    _emit(
+      BrandingState(
+        profile: profile,
+        status: BrandingStatus.live,
+        tenantId: profile.tenantId,
+      ),
+    );
+    return _state;
+  }
+
+  /// Forgets the tenant and its cache, and goes back to the app's own
+  /// branding. Call it on logout and before another tenant signs in.
   Future<void> clear() async {
-    _tenant = null;
+    _provider = null;
     await _engine.clearBranding();
     _emit(BrandingState(profile: _default, status: BrandingStatus.idle));
   }
 
-  /// Applies the active branding to the **launcher** where the platform
-  /// allows it: the name and icon of a home-screen shortcut on Android, the
-  /// Dock icon and window title on desktop, the favicon and tab title on
-  /// web. iOS can only switch between icons compiled into the build.
+  /// Applies the active branding to the **launcher** as far as the platform
+  /// allows, and reports how far that was.
   ///
-  /// The downloaded image is used only when the platform accepts arbitrary
-  /// images; [fallbackVariant] names a variant from the build for the rest.
-  /// Read the returned [IconShiftResult] — it says exactly what the OS did.
-  Future<IconShiftResult> applyLauncherBranding({
+  /// | Platform | Result |
+  /// | --- | --- |
+  /// | macOS, Windows, Linux | Dock/taskbar icon and window title |
+  /// | Web | favicon and tab title |
+  /// | Android | a home-screen shortcut carrying the name and icon |
+  /// | iOS | the icon of [fallbackVariant] if the build has it; the name needs a branded build |
+  ///
+  /// [NativeBrandingReport.needsBuild] tells the app to ask for a branded
+  /// build (`icon_shift_cli brand`) instead of pretending it worked.
+  Future<NativeBrandingReport> applyLauncherBranding({
     String? fallbackVariant,
   }) async {
     final profile = _state.profile;
     final icon = profile.launcherIconUrl;
-    return _engine.setArbitraryIdentity(
+    final capabilities = await _engine.getCapabilities();
+    final result = await _engine.setArbitraryIdentity(
       name: profile.displayName,
       variant: fallbackVariant,
       remoteIcon: icon == null
@@ -268,10 +303,47 @@ class BrandingController extends ChangeNotifier
               variant: fallbackVariant,
             ),
     );
+
+    final wanted = [
+      if (profile.displayName != null) result.displayName,
+      if (icon != null || fallbackVariant != null) result.icon,
+    ];
+    final blocked = wanted.where(
+      (o) =>
+          o.status == OperationStatus.unsupported ||
+          o.status == OperationStatus.failed,
+    );
+    final NativeBrandingScope scope;
+    String? message;
+    if (wanted.isEmpty) {
+      scope = NativeBrandingScope.unsupported;
+      message = 'The branding carries neither a name nor an icon.';
+    } else if (blocked.isEmpty) {
+      scope = capabilities.icon.acceptsArbitraryValues
+          ? NativeBrandingScope.applied
+          : NativeBrandingScope.shortcut;
+      if (scope == NativeBrandingScope.shortcut) {
+        message =
+            'Applied to a home-screen shortcut; the app entry itself shows '
+            'what the build compiled in.';
+      }
+    } else if (blocked.any(
+      (o) => o.errorCode == IconShiftErrorCode.buildRequired,
+    )) {
+      scope = NativeBrandingScope.requiresBuild;
+      message =
+          'This platform only shows a launcher name and icon compiled into '
+          'the app. Build this tenant its own app: `dart run icon_shift_cli '
+          'brand` with the tenant\'s branding.';
+    } else {
+      scope = NativeBrandingScope.unsupported;
+      message = blocked.first.message;
+    }
+    return NativeBrandingReport(scope: scope, result: result, message: message);
   }
 
-  /// Downloads the institution's logo for in-app use, or `null` when there
-  /// is none or it cannot be fetched. Images over [maxRemoteIconBytes] and
+  /// Downloads the tenant's logo for in-app use, or `null` when there is
+  /// none or it cannot be fetched. Images over [maxRemoteIconBytes] and
   /// anything that is not an image are refused.
   Future<Uint8List?> loadLogo() async {
     final url = _state.profile.logoUrl;
@@ -292,75 +364,54 @@ class BrandingController extends ChangeNotifier
     }
   }
 
-  Future<void> _refresh(BrandingTenant tenant) async {
-    final String document;
-    try {
-      document = await (_fetch ?? _httpFetch)(tenant).timeout(timeout);
-    } on Object catch (e) {
-      // Offline is not an error the app should notice: keep showing what we
-      // have, cached or default.
-      _emit(
-        BrandingState(
-          profile: _state.tenant?.id == tenant.id
-              ? _state.profile
-              : _readCache(tenant) ?? _default,
-          status: BrandingStatus.offline,
-          tenant: tenant,
-          error: '$e',
-        ),
-      );
-      return;
-    }
-    if (tenant.id != _tenant?.id) return; // Switched again while fetching.
-
+  Future<void> _refresh(BrandingProvider provider) async {
+    final tenantId = provider.tenantId;
     final BrandingProfile fresh;
     try {
-      fresh = BrandingProfile.decode(document, tenantId: tenant.id);
+      fresh = await provider.fetch().timeout(timeout);
     } on Object catch (e) {
+      // Unreachable or unusable: keep showing what we have, cached or
+      // default. The app is never broken by a branding server.
       _emit(
         BrandingState(
-          profile: _state.profile,
-          status: BrandingStatus.invalid,
-          tenant: tenant,
+          profile: _state.tenantId == tenantId
+              ? _state.profile
+              : _readCache(tenantId) ?? _default,
+          // A malformed answer is the server's fault, not the network's.
+          status: e is InvalidArgumentException
+              ? BrandingStatus.invalid
+              : BrandingStatus.offline,
+          tenantId: tenantId,
           error: '$e',
         ),
       );
       return;
     }
+    if (tenantId != _provider?.tenantId) return; // Switched while fetching.
 
     // Unchanged branding: no cache write, no listener notification.
     final current = _state.profile;
     if (_state.status != BrandingStatus.live ||
         current.tenantId != fresh.tenantId ||
         current.version != fresh.version) {
-      await _engine.writeBranding(tenant.id, jsonEncode(fresh.toJson()));
+      await _engine.writeBranding(tenantId, jsonEncode(fresh.toJson()));
     }
     _emit(
       BrandingState(
         profile: fresh,
         status: BrandingStatus.live,
-        tenant: tenant,
+        tenantId: tenantId,
       ),
     );
   }
 
-  Future<String> _httpFetch(BrandingTenant tenant) async {
-    final bytes = await (_download ?? httpGetBytes)(
-      tenant.url,
-      maxBytes: maxDocumentBytes,
-      // Laravel answers HTML/redirects for errors without it.
-      headers: const {'Accept': 'application/json'},
-    );
-    return utf8.decode(bytes);
-  }
-
-  BrandingProfile? _readCache(BrandingTenant tenant) {
-    final json = _engine.readBranding(tenant.id);
+  BrandingProfile? _readCache(String tenantId) {
+    final json = _engine.readBranding(tenantId);
     if (json == null) return null;
     try {
-      final cached = BrandingProfile.decode(json, tenantId: tenant.id);
+      final cached = BrandingProfile.decode(json, tenantId: tenantId);
       final owner = cached.extras[cachedForTenantKey];
-      if (owner != null && owner != tenant.id) {
+      if (owner != null && owner != tenantId) {
         debugPrint('IconShift: cached branding belongs to "$owner"; ignored.');
         return null;
       }

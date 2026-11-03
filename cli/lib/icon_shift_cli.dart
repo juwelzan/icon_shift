@@ -18,6 +18,15 @@ import 'src/platform_icons.dart';
 import 'src/property_table.dart';
 
 export 'src/backup.dart' show Backup, backupRoot;
+export 'src/brand_engine.dart'
+    show
+        ArtifactCheck,
+        BrandPlan,
+        inspectApk,
+        inspectAppBundle,
+        planBranding,
+        writeBuildRecord;
+export 'src/branding.dart' show InstitutionBranding, maxBrandingBytes;
 export 'src/config.dart'
     show ConfigException, GeneratorConfig, checkProjectPath;
 export 'src/identity.dart'

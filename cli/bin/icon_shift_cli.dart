@@ -1,6 +1,8 @@
 import 'dart:io';
 
 import 'package:args/command_runner.dart';
+import 'package:path/path.dart' as p;
+
 import 'package:icon_shift_cli/icon_shift_cli.dart';
 
 /// Exit codes: 0 ok · 1 validation errors · 2 refused (conflicts) ·
@@ -32,6 +34,7 @@ Future<void> main(List<String> arguments) async {
         ..addCommand(_PreviewCommand())
         ..addCommand(_CapabilitiesCommand())
         ..addCommand(_IdentityCommand())
+        ..addCommand(_BrandCommand())
         ..addCommand(_AssetsCommand())
         ..addCommand(_RollbackCommand());
   try {
@@ -322,6 +325,224 @@ class _IdentityCommand extends _Command {
     final result = Plan(projectDir);
     planBuildIdentity(projectDir, identity, result);
     return applyOrPreview(result, dryRun: a.flag('dry-run'), label: 'identity');
+  }
+}
+
+class _BrandCommand extends _Command {
+  _BrandCommand() {
+    argParser
+      ..addOption(
+        'host',
+        help:
+            'School host serving GET /api/v1/branding, e.g. '
+            'https://abc.digiedu.online.',
+      )
+      ..addOption('name', help: 'Institution name, instead of --host.')
+      ..addOption('icon', help: 'Icon path or https URL, instead of --host.')
+      ..addOption(
+        'branding-path',
+        defaultsTo: '/api/v1/branding',
+        help: 'Branding endpoint path on the school host.',
+      )
+      ..addOption(
+        'application-id',
+        help: 'Android applicationId; {slug} becomes the school slug.',
+      )
+      ..addOption('bundle-id', help: 'Apple bundle id; {slug} is expanded.')
+      ..addOption(
+        'slug',
+        help:
+            'Identifier for this build (default: from the school host). '
+            'Lowercase letters, digits and "_".',
+      )
+      ..addMultiOption(
+        'build',
+        allowed: ['apk', 'appbundle', 'ios', 'ios-simulator'],
+        help: 'Run this Flutter build after branding (repeatable).',
+      )
+      ..addFlag(
+        'verify',
+        defaultsTo: true,
+        help: 'Check the built artifact really carries the institution name.',
+      )
+      ..addFlag(
+        'revert',
+        defaultsTo: true,
+        help:
+            'Restore the working tree after building, so the next '
+            'institution starts from the shared codebase.',
+      )
+      ..addOption(
+        'artifacts',
+        help: 'Directory to copy the branded artifacts and build record into.',
+      )
+      ..addOption('aapt2', help: 'aapt2 binary used to verify APKs.')
+      ..addFlag(
+        'refresh-remote',
+        negatable: false,
+        help: 'Download the icon again instead of reusing the cache.',
+      )
+      ..addFlag(
+        'dry-run',
+        abbr: 'n',
+        negatable: false,
+        help: 'Show what would change without writing or building.',
+      );
+  }
+
+  @override
+  final name = 'brand';
+  @override
+  final description =
+      'Build one institution\'s branded app: fetch its branding, generate the '
+      'native name/icon/ids, build, verify the artifact, and restore the '
+      'shared codebase.';
+
+  @override
+  Future<int> run() async {
+    final a = argResults!;
+    final host = a.option('host');
+    final manual = a.option('name');
+    if ((host == null) == (manual == null)) {
+      usageException('Pass --host <school url>, or --name (with --icon).');
+    }
+
+    // --icon takes a project path or an https URL; planBranding downloads
+    // the remote ones before generating.
+    final branding = host != null
+        ? await InstitutionBranding.fetch(
+            Uri.parse(host),
+            path: a.option('branding-path')!,
+          )
+        : InstitutionBranding(
+            tenantId: manual!,
+            appName: manual,
+            logoUrl: a.option('icon'),
+          );
+
+    final branded = await planBranding(
+      projectDir: projectDir,
+      base: loadProjectConfig(),
+      branding: branding,
+      applicationIdTemplate: a.option('application-id'),
+      bundleIdTemplate: a.option('bundle-id'),
+      slug: a.option('slug'),
+      refreshAssets: a.flag('refresh-remote'),
+    );
+    for (final m in branded.messages) {
+      stdout.writeln('INFO: $m');
+    }
+
+    final dryRun = a.flag('dry-run');
+    final code = applyOrPreview(
+      branded.plan,
+      dryRun: dryRun,
+      label: 'brand ${branded.slug}',
+    );
+    if (code != 0 || dryRun) return code;
+
+    final builds = a.multiOption('build');
+    final checks = <ArtifactCheck>[];
+    var failed = false;
+    try {
+      for (final target in builds) {
+        final built = await _runBuild(target);
+        if (built == null) {
+          failed = true;
+          continue;
+        }
+        final check = target == 'ios' || target == 'ios-simulator'
+            ? inspectAppBundle(built)
+            : inspectApk(built, aapt2: a.option('aapt2'));
+        checks.add(check);
+        stdout.writeln('ARTIFACT: $check');
+        if (a.flag('verify') &&
+            !check.matches(
+              branded.identity.displayName!,
+              expectedId: target.startsWith('ios')
+                  ? branded.identity.iosBundleId
+                  : branded.identity.androidApplicationId,
+            )) {
+          stderr.writeln(
+            'ERROR: ${check.artifact} does not carry '
+            '"${branded.identity.displayName}".',
+          );
+          failed = true;
+        }
+        _collect(a.option('artifacts'), built, branded, checks);
+      }
+    } finally {
+      if (a.flag('revert')) _revert(branded);
+    }
+    return failed ? 1 : 0;
+  }
+
+  /// Runs `flutter build <target>` and returns the artifact path.
+  Future<String?> _runBuild(String target) async {
+    final args = switch (target) {
+      'apk' => ['build', 'apk', '--release'],
+      'appbundle' => ['build', 'appbundle', '--release'],
+      'ios' => ['build', 'ios', '--release'],
+      _ => ['build', 'ios', '--simulator', '--debug'],
+    };
+    stdout.writeln('\nflutter ${args.join(' ')}');
+    final result = await Process.start(
+      'flutter',
+      args,
+      workingDirectory: projectDir,
+      mode: ProcessStartMode.inheritStdio,
+    );
+    if (await result.exitCode != 0) {
+      stderr.writeln('ERROR: flutter ${args.join(' ')} failed.');
+      return null;
+    }
+    final path = switch (target) {
+      'apk' => 'build/app/outputs/flutter-apk/app-release.apk',
+      'appbundle' => 'build/app/outputs/bundle/release/app-release.aab',
+      'ios' => 'build/ios/iphoneos/Runner.app',
+      _ => 'build/ios/iphonesimulator/Runner.app',
+    };
+    return p.join(projectDir, path);
+  }
+
+  void _collect(
+    String? dir,
+    String artifact,
+    BrandPlan branded,
+    List<ArtifactCheck> checks,
+  ) {
+    if (dir == null) return;
+    final target = p.isAbsolute(dir) ? dir : p.join(projectDir, dir);
+    final slug = branded.slug;
+    final destination = p.join(target, slug, p.basename(artifact));
+    Directory(p.dirname(destination)).createSync(recursive: true);
+    final type = FileSystemEntity.typeSync(artifact);
+    if (type == FileSystemEntityType.directory) {
+      for (final f in Directory(
+        artifact,
+      ).listSync(recursive: true).whereType<File>()) {
+        final relative = p.relative(f.path, from: artifact);
+        final out = File(p.join(destination, relative))
+          ..parent.createSync(recursive: true);
+        f.copySync(out.path);
+      }
+    } else {
+      File(artifact).copySync(destination);
+    }
+    writeBuildRecord(p.join(target, slug, 'build.json'), branded, checks);
+    stdout.writeln('COLLECTED: $destination');
+  }
+
+  /// Puts the shared codebase back, so the next institution starts clean.
+  void _revert(BrandPlan branded) {
+    final backups = Backup.list(projectDir);
+    final mine = backups.where((b) => b.label == 'brand ${branded.slug}');
+    if (mine.isEmpty) return;
+    final (:restored, :conflicts) = mine.last.restore(force: true);
+    stdout.writeln('REVERTED: ${restored.length} file(s) restored.');
+    if (conflicts.isNotEmpty) {
+      stderr.writeln('WARNING: not restored: ${conflicts.join(', ')}');
+    }
   }
 }
 

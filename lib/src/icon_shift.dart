@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart'
     show Brightness, WidgetsBinding, WidgetsBindingObserver;
 import 'package:meta/meta.dart' show useResult;
 
 import 'branding/branding_controller.dart';
+import 'branding/branding_provider.dart';
 import 'config/app_identity.dart';
 import 'config/icon_shift_config.dart';
 import 'config/platform.dart';
@@ -67,6 +70,7 @@ abstract final class IconShift {
     String? locale,
     bool followSystemAppearance = true,
     BrandingProfile? defaultBranding,
+    BrandingProvider? brandingProvider,
   }) async {
     final engine = IconShiftEngine(
       platform: IconShiftPlatformInterface.instance,
@@ -81,6 +85,9 @@ abstract final class IconShift {
       engine: engine,
       defaultBranding: defaultBranding,
     );
+    // Branding must never hold up startup: the cached profile is applied
+    // synchronously inside load(), the network part runs on.
+    if (brandingProvider != null) unawaited(_branding!.load(brandingProvider));
     _AppearanceObserver.instance.enabled = followSystemAppearance;
   }
 
@@ -97,6 +104,27 @@ abstract final class IconShift {
   /// before any institution is selected.
   static BrandingController get branding =>
       _branding ?? (throw const NotInitializedException());
+
+  /// Shows the branding [provider] serves (a tenant's name, logo and
+  /// colours), cached copy first. See [BrandingController.load].
+  static Future<BrandingState> loadBranding(
+    BrandingProvider provider, {
+    bool refresh = false,
+  }) => branding.load(provider, refresh: refresh);
+
+  /// Re-fetches the active tenant's branding.
+  static Future<BrandingState> refreshBranding() => branding.refresh();
+
+  /// Shows [profile] directly, without a provider.
+  static Future<BrandingState> applyBranding(BrandingProfile profile) =>
+      branding.apply(profile);
+
+  /// Applies the active branding to the launcher as far as the platform
+  /// allows, and reports whether a branded build is needed instead.
+  @useResult
+  static Future<NativeBrandingReport> applyLauncherBranding({
+    String? fallbackVariant,
+  }) => branding.applyLauncherBranding(fallbackVariant: fallbackVariant);
 
   /// The name the app currently presents: the custom name from
   /// [setDisplayName], else the selected variant's name (localized).

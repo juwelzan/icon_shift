@@ -19,6 +19,7 @@ Global options: `--project <dir>` (default `.`), `--config <file>` (default
 | `preview [--variant v] [--profile p]` | How every variant resolves per platform; dry-run diff of the build identity | no |
 | `capabilities [--platform p]` | The identity property table | no |
 | `identity --show` | Identity currently in the native project files | no |
+| `brand --host <school>` | One institution's branded build: fetch branding, generate name/icon/ids, build, verify the artifact, restore the codebase | yes (backed up, reverted) |
 | `identity --apply [--profile p] [-n]` | Apply `application:` (+ profile) | yes (backed up) |
 | `identity --reset [--force]` | Undo the most recent `--apply` | yes |
 | `assets --check` | Source image checks with sizes | no |

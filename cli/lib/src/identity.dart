@@ -679,7 +679,7 @@ void _planAndroidLabel(
   }
   if (label.startsWith('@string/')) {
     final key = label.substring('@string/'.length);
-    final target = _stringResourceFile(projectDir, key);
+    final target = _stringResourceFile(plan, projectDir, key);
     if (target == null) {
       plan.error(
         '$manifest: <application android:label> is "$label", but no '
@@ -716,16 +716,25 @@ void _planAndroidLabel(
 }
 
 /// The res/values/*.xml file defining the string [key], if any.
-String? _stringResourceFile(String projectDir, String key) {
+///
+/// Files [plan] is about to write count too: `generate` and
+/// `identity --apply` can run in one plan (`brand` does exactly that), and
+/// the resource then exists only as a pending write.
+String? _stringResourceFile(Plan plan, String projectDir, String key) {
   const dir = 'android/app/src/main/res/values';
+  final pattern = RegExp('<string name="${RegExp.escape(key)}">');
+
+  for (final path in plan.writes.keys) {
+    if (p.posix.dirname(path) != dir || !path.endsWith('.xml')) continue;
+    if (pattern.hasMatch(plan.pendingContent(path) ?? '')) return path;
+  }
   final values = Directory(p.join(projectDir, dir));
   if (!values.existsSync()) return null;
-  final pattern = RegExp('<string name="${RegExp.escape(key)}">');
   for (final file in values.listSync().whereType<File>()) {
     if (!file.path.endsWith('.xml')) continue;
-    if (pattern.hasMatch(file.readAsStringSync())) {
-      return '$dir/${p.basename(file.path)}';
-    }
+    final path = '$dir/${p.basename(file.path)}';
+    final content = plan.pendingContent(path) ?? file.readAsStringSync();
+    if (pattern.hasMatch(content)) return path;
   }
   return null;
 }

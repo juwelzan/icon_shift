@@ -130,38 +130,91 @@ launcher shows "Schoolmate". Schools that want their name on the home screen
 get the optional shortcut on Android. Switching schools never needs a
 reinstall.
 
-### Mode B — a branded build per school
+### Mode B — a branded build per institution, automated
 
-For schools that must own the home-screen identity, build per institution
-from the same codebase:
-
-```yaml
-# icon_shift.yaml
-default:
-  name: Schoolmate
-  icon: assets/icons/schoolmate.png
-
-remote:
-  manifest: https://admin.digiedu.online/api/v1/branding/manifest   # optional
-
-build_profiles:
-  abc_school:
-    display_name: ABC School
-    android: { application_id: com.digiedu.abcschool }
-    ios:     { bundle_id: com.digiedu.abcschool }
-```
+`icon_shift_cli brand` turns the shared codebase into one institution's app
+and puts it back afterwards, so a build service can loop over schools.
 
 ```sh
-dart run icon_shift_cli identity --apply --profile abc_school
-dart run icon_shift_cli generate        # downloads https: icons, writes resources
-flutter build appbundle
+dart run icon_shift_cli brand \
+  --host https://abc.digiedu.online \
+  --slug abc_school \
+  --application-id com.digiedu.{slug} \
+  --bundle-id com.digiedu.{slug} \
+  --build apk --build ios \
+  --artifacts out/
 ```
 
-`generate` writes the Android application label and launcher labels and the
-iOS `CFBundleDisplayName` (see
-[the display name](icon_configuration.md#the-display-name)); icons come from
-the config or from `remote.manifest`, so a build pipeline can produce one
-APK/AAB and IPA per school without touching the codebase.
+What one run does:
+
+1. `GET https://abc.digiedu.online/api/v1/branding` (public, no login).
+2. Validates the response: name, `#RRGGBB` colours, https URLs.
+3. Downloads the school's logo into `remote.assets_dir`.
+4. Writes the Android resources: launcher icons per density (adaptive, with
+   the school's primary colour as the background), the alias labels, and
+   `<application android:label>` through `icon_shift_app_name`.
+5. Writes the iOS asset catalog — the **primary** `AppIcon`, not just an
+   alternate set — and `CFBundleDisplayName`.
+6. Applies the per-institution `applicationId` and bundle id. `{slug}`
+   expands to `abc_school` for Android and `abc-school` for Apple, which
+   rejects `_`.
+7. Runs `flutter build` for each `--build` target.
+8. Reads the finished artifact back (`aapt2 dump badging`, `Info.plist`) and
+   **fails the run** if the name or id does not match.
+9. Copies the artifact and a `build.json` record into `--artifacts`.
+10. Restores the working tree from the backup (`--no-revert` to keep it).
+
+| Option | Meaning |
+| --- | --- |
+| `--host` | School host serving the branding endpoint |
+| `--branding-path` | Endpoint path (default `/api/v1/branding`) |
+| `--name` / `--icon` | Brand from local values instead of a server |
+| `--slug` | Build identifier; default from the host |
+| `--application-id` / `--bundle-id` | Templates containing `{slug}` |
+| `--build` | `apk`, `appbundle`, `ios`, `ios-simulator` (repeatable) |
+| `--artifacts` | Where to collect artifacts and `build.json` |
+| `--no-verify` | Skip the artifact check |
+| `--no-revert` | Leave the branded working tree in place |
+| `-n` | Show the changes without writing or building |
+
+The institution's name wins over `application.display_name` and over any
+shared per-platform or per-locale name, so no device language falls back to
+the shared app's name.
+
+#### In a build service
+
+```sh
+for school in $(curl -s https://admin.digiedu.online/api/v1/schools | jq -r '.data[].host'); do
+  dart run icon_shift_cli brand --host "https://$school" \
+    --application-id com.digiedu.{slug} --bundle-id com.digiedu.{slug} \
+    --build appbundle --artifacts out/ || echo "FAILED: $school"
+done
+```
+
+Each run starts from the same clean codebase, so builds are repeatable and
+order does not matter. `build.json` records the institution, the ids and the
+verified artifact values for the distribution step.
+
+iOS still needs signing for a device build or an IPA: run `--build ios` on a
+machine with the institution's provisioning profile, or hand the branded tree
+(`--no-revert`) to Xcode Cloud / Fastlane.
+
+#### Verified
+
+Two institutions were built from one codebase and installed:
+
+| | Institution A (live server) | Institution B (own logo) |
+| --- | --- | --- |
+| Branding source | `amena-baki.digiedu.online` | test school server |
+| Android label | `Amena Baki Residential Model School and College` | `Sunrise Academy` |
+| applicationId | `com.digiedu.amena_baki` | `com.digiedu.sunrise` |
+| iOS `CFBundleDisplayName` | same name | `Sunrise Academy` |
+| Bundle id | `com.digiedu.amena-baki` | `com.digiedu.sunrise` |
+| Launcher icon | shared (no logo published) | the downloaded logo |
+
+Both appear side by side in the Android app drawer and on the iOS home
+screen with their own names, and the shared codebase was byte-identical
+before and after all four builds.
 
 Mode A and Mode B share the same configuration and the same runtime API: a
 school can start on the shared app and move to its own build later.
