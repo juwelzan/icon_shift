@@ -1,43 +1,82 @@
 # Multi-tenant (white-label) branding
 
-One app, one branded experience per institution. Branding comes from the
-school's own server at runtime; only the **launcher** name and icon are
-limited by what Android and iOS allow (see
+One app, one branded experience per tenant. Branding comes from your own
+server at runtime; only the **launcher** name and icon are limited by what
+Android and iOS allow (see
 [Native launcher branding](#native-launcher-branding)).
 
-## How a school is identified
+IconShift assumes no particular back end: you supply a
+[branding provider](#branding-providers), and it handles caching, tenant
+isolation, offline start and the native work.
 
-DigiEdu / Schoolmate gives every institution its own host, and the branding
-endpoint needs no login:
+## Branding providers
 
+A `BrandingProvider` answers two questions: which tenant this is, and what
+its branding is.
+
+```dart
+// A JSON endpoint per tenant (a host per tenant):
+HttpBrandingProvider.host(
+  Uri.parse('https://abc.example.com'),
+  path: '/api/v1/branding',
+);
+
+// One endpoint for every tenant:
+HttpBrandingProvider(
+  url: Uri.parse('https://api.example.com/branding?tenant=school_123'),
+  tenantId: 'school_123',
+  headers: {'Authorization': 'Bearer $token'},
+);
+
+// Branding from code you already have:
+CallbackBrandingProvider(
+  tenantId: institution.id,
+  fetch: () async =>
+      BrandingProfile.parse(await api.getBranding(), tenantId: institution.id),
+);
+
+// A fixed profile (app-local branding, tests):
+StaticBrandingProvider(const BrandingProfile(tenantId: 'local', appName: 'My App'));
 ```
-GET https://<school>.digiedu.online/api/v1/branding
-Accept: application/json
-```
+
+`tenantId` is the cache key, so two tenants can never see each other's
+branding. Writing your own provider is three lines: implement `tenantId` and
+`fetch()`.
+
+### Response shape
+
+`BrandingProfile.parse` reads a JSON object, unwrapping a `data` envelope if
+there is one:
 
 ```json
 {
   "data": {
-    "app_name": "Amena Baki Residential Model School and College",
-    "logo_url": null,
-    "favicon_url": null,
-    "primary_color": "#1e40af",
-    "secondary_color": "#3b82f6",
-    "app_code": "588846"
-  },
-  "message": "Branding retrieved successfully."
+    "app_name": "ABC School",
+    "logo_url": "https://cdn.example.com/abc/logo.png",
+    "launcher_icon_url": "https://cdn.example.com/abc/icon.png",
+    "primary_color": "#2563EB",
+    "secondary_color": "#4F46E5",
+    "institution_id": "school_123"
+  }
 }
 ```
 
-The **host is the tenant**: it is the cache key, so two schools can never see
-each other's branding. `BrandingTenant(host: …)` builds the endpoint URL and
-the tenant id from it.
+Every field is optional. The defaults also accept `name`,
+`institution_name`, `logo`, `icon_url`, `favicon_url`, `app_code`,
+`tenant_id`, `branding_version` and `version`. Unknown fields are kept in
+`BrandingProfile.extras`.
 
-The response is parsed by [`BrandingProfile`](../lib/src/branding/branding_profile.dart),
-which also accepts `institution_name`/`name`, `launcher_icon_url`/`icon_url`,
-`institution_id`/`tenant_id` and `branding_version`/`version`, with or
-without the `data` envelope — so another back end needs no adapter. Unknown
-fields are kept in `BrandingProfile.extras`.
+When the field names differ, map them instead of writing an adapter:
+
+```dart
+const fields = BrandingFieldMap(
+  envelope: 'result',          // or null when the payload is top level
+  appName: ['title'],
+  launcherIconUrl: ['icon'],
+  primaryColor: ['brand_colour'],
+);
+HttpBrandingProvider(url: endpoint, tenantId: id, fields: fields);
+```
 
 ## Using it
 
@@ -46,15 +85,18 @@ await IconShift.initialize(
   iconShiftConfig,
   defaultBranding: const BrandingProfile(
     tenantId: 'default',
-    appName: 'Schoolmate',          // before a school is chosen
+    appName: 'My App',           // before a tenant is chosen
   ),
+  // Optional: start loading a tenant right away, without blocking startup.
+  brandingProvider: savedTenant,
 );
 
-final branding = IconShift.branding;
-
-// After the user picks or types a school address:
-await branding.load(
-  BrandingTenant(host: Uri.parse('https://abc.digiedu.online')),
+// After the user picks a tenant:
+await IconShift.loadBranding(
+  HttpBrandingProvider.host(
+    Uri.parse('https://abc.example.com'),
+    path: '/api/v1/branding',
+  ),
 );
 ```
 
@@ -67,12 +109,12 @@ ValueListenableBuilder<BrandingState>(
   builder: (context, state, _) {
     final b = state.profile;
     return MaterialApp(
-      title: b.displayName ?? 'Schoolmate',
+      title: b.displayName ?? 'My App',
       theme: ThemeData(
-        colorSchemeSeed: Color(b.primaryColor ?? 0xFF1E40AF),
+        colorSchemeSeed: Color(b.primaryColor ?? 0xFF2563EB),
       ),
       home: Scaffold(
-        appBar: AppBar(title: Text(b.displayName ?? 'Schoolmate')),
+        appBar: AppBar(title: Text(b.displayName ?? 'My App')),
       ),
     );
   },
@@ -81,12 +123,13 @@ ValueListenableBuilder<BrandingState>(
 
 | Call | What it does |
 | --- | --- |
-| `load(tenant)` | Cached branding first, then the server. Switching tenant drops the previous school's cache before anything is shown. |
-| `refresh()` | Re-fetches the active school. |
-| `clear()` | Logout: forgets the school and its cache, back to `defaultBranding`. |
-| `loadLogo()` | Downloads `logo_url` (https, ≤ 5 MB, must be an image) or returns `null`. |
-| `applyLauncherBranding()` | Applies the name and icon to the launcher as far as the platform allows. |
-| `IconShift.branding.value` | `BrandingState(profile, status, tenant, error)`. |
+| `IconShift.loadBranding(provider)` | Cached branding first, then the provider. Switching tenant drops the previous one's cache before anything is shown. |
+| `IconShift.refreshBranding()` | Re-fetches the active tenant. |
+| `IconShift.applyBranding(profile)` | Shows a profile the app already has (a push payload, a bundled file) and caches it. |
+| `IconShift.branding.clear()` | Logout: forgets the tenant and its cache, back to `defaultBranding`. |
+| `IconShift.branding.loadLogo()` | Downloads `logo_url` (https, ≤ 5 MB, must be an image) or returns `null`. |
+| `IconShift.applyLauncherBranding()` | Applies the name and icon to the launcher as far as the platform allows, and reports how far. |
+| `IconShift.branding.value` | `BrandingState(profile, status, tenantId, error)`. |
 
 `BrandingStatus` tells the UI where the branding came from: `idle`, `cached`,
 `live`, `offline` (server unreachable — cached or default is shown, nothing
@@ -95,8 +138,8 @@ throws) or `invalid` (unusable answer — the previous branding stays).
 ### Rebuilds and requests
 
 * Unchanged branding is not re-cached and listeners are not notified: the
-  version comes from the server, or is a content hash when it sends none
-  (this endpoint sends no `branding_version` and no `ETag`).
+  version comes from the server, or is a content hash when it sends none —
+  many endpoints send neither a version nor an `ETag`.
 * Concurrent `load()` calls share one request.
 
 ### Safety
@@ -117,17 +160,30 @@ The home-screen name and icon are **not** part of in-app branding.
 | --- | --- |
 | macOS, Windows, Linux | Dock/taskbar icon and window title, from the downloaded image |
 | Web | favicon and tab title |
-| Android | a home-screen **shortcut** with the school's name and downloaded icon — the app's own entry can only show what the build compiled in (the user accepts once, later changes are silent) |
+| Android | a home-screen **shortcut** with the tenant's name and downloaded icon — the app's own entry can only show what the build compiled in (the user accepts once, later changes are silent) |
 | iOS | the icon of `fallbackVariant` if it is in the build; the name **cannot** change at runtime |
+
+It returns a `NativeBrandingReport`, so the app can tell "done" from "needs
+a branded build" instead of guessing:
+
+```dart
+final report = await IconShift.applyLauncherBranding(fallbackVariant: 'dark');
+switch (report.scope) {
+  case NativeBrandingScope.applied:       // the app's own launcher entry
+  case NativeBrandingScope.shortcut:      // a shortcut beside it (Android)
+  case NativeBrandingScope.requiresBuild: // build this tenant its own app
+  case NativeBrandingScope.unsupported:   // nothing to change here
+}
+```
 
 Neither Android nor iOS lets an installed app turn an arbitrary downloaded
 image into its own launcher icon. So:
 
-### Mode A — one shared Schoolmate app (default)
+### Mode A — one shared app (default)
 
-Every school uses the same build. In-app branding is fully dynamic; the
-launcher shows "Schoolmate". Schools that want their name on the home screen
-get the optional shortcut on Android. Switching schools never needs a
+Every tenant uses the same build. In-app branding is fully dynamic; the
+launcher shows the app's own name. Tenants that want their name on the home
+screen get the optional shortcut on Android. Switching tenants never needs a
 reinstall.
 
 ### Mode B — a branded build per institution, automated
@@ -137,17 +193,18 @@ and puts it back afterwards, so a build service can loop over schools.
 
 ```sh
 dart run icon_shift_cli brand \
-  --host https://abc.digiedu.online \
+  --host https://abc.example.com \
   --slug abc_school \
-  --application-id com.digiedu.{slug} \
-  --bundle-id com.digiedu.{slug} \
+  --application-id com.example.{slug} \
+  --bundle-id com.example.{slug} \
   --build apk --build ios \
   --artifacts out/
 ```
 
 What one run does:
 
-1. `GET https://abc.digiedu.online/api/v1/branding` (public, no login).
+1. `GET https://abc.example.com/api/v1/branding` — or `--branding-file` for
+   a document the pipeline already has.
 2. Validates the response: name, `#RRGGBB` colours, https URLs.
 3. Downloads the school's logo into `remote.assets_dir`.
 4. Writes the Android resources: launcher icons per density (adaptive, with
@@ -184,11 +241,18 @@ the shared app's name.
 #### In a build service
 
 ```sh
-for school in $(curl -s https://admin.digiedu.online/api/v1/schools | jq -r '.data[].host'); do
-  dart run icon_shift_cli brand --host "https://$school" \
-    --application-id com.digiedu.{slug} --bundle-id com.digiedu.{slug} \
-    --build appbundle --artifacts out/ || echo "FAILED: $school"
+for host in $(curl -s https://admin.example.com/api/v1/tenants | jq -r '.data[].host'); do
+  dart run icon_shift_cli brand --host "https://$host" \
+    --application-id com.example.{slug} --bundle-id com.example.{slug} \
+    --build appbundle --artifacts out/ || echo "FAILED: $host"
 done
+```
+
+A pipeline whose API IconShift cannot call directly hands the document over
+instead:
+
+```sh
+dart run icon_shift_cli brand --branding-file tenant.json --slug abc_school …
 ```
 
 Each run starts from the same clean codebase, so builds are repeatable and
@@ -201,20 +265,27 @@ machine with the institution's provisioning profile, or hand the branded tree
 
 #### Verified
 
-Two institutions were built from one codebase and installed:
+Three tenants were built from one codebase; the first two were installed:
 
-| | Institution A (live server) | Institution B (own logo) |
+| | Tenant A (live server) | Tenant B (own logo) |
 | --- | --- | --- |
-| Branding source | `amena-baki.digiedu.online` | test school server |
+| Branding source | a live school host | a local test server |
 | Android label | `Amena Baki Residential Model School and College` | `Sunrise Academy` |
 | applicationId | `com.digiedu.amena_baki` | `com.digiedu.sunrise` |
+| Launcher label in every locale | the tenant's name | the tenant's name |
 | iOS `CFBundleDisplayName` | same name | `Sunrise Academy` |
 | Bundle id | `com.digiedu.amena-baki` | `com.digiedu.sunrise` |
 | Launcher icon | shared (no logo published) | the downloaded logo |
 
 Both appear side by side in the Android app drawer and on the iOS home
 screen with their own names, and the shared codebase was byte-identical
-before and after all four builds.
+before and after every build.
+
+A third tenant was built from a bespoke response shape through
+`--branding-file` (`{"data": {...}}` with `institution_id`), producing
+`application-label:'Riverdale Academy'` and
+`package: name='com.example.riverdale'` — the engine is not tied to one
+back end.
 
 Mode A and Mode B share the same configuration and the same runtime API: a
 school can start on the shared app and move to its own build later.
@@ -223,8 +294,8 @@ school can start on the shared app and move to its own build later.
 
 ```sh
 flutter test tool/branding_live_check.dart \
-  --dart-define=host=https://abc.digiedu.online
+  --dart-define=url=https://abc.example.com/api/v1/branding
 ```
 
-It fetches and parses through the package's own code and prints the profile
-and the exact JSON that would be cached.
+It fetches and parses through the package's own provider and prints the
+profile and the exact JSON that would be cached.

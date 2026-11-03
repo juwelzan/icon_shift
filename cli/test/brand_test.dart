@@ -151,7 +151,10 @@ void main() {
 
     test('fetch refuses a non-https school host', () {
       expect(
-        () => InstitutionBranding.fetch(Uri.parse('http://abc.example.com')),
+        () => InstitutionBranding.fetch(
+          Uri.parse('http://abc.example.com'),
+          path: '/b',
+        ),
         throwsA(isA<ConfigException>()),
       );
     });
@@ -160,6 +163,7 @@ void main() {
       final seen = <Uri>[];
       final b = await InstitutionBranding.fetch(
         Uri.parse('https://abc.digiedu.online'),
+        path: '/api/v1/branding',
         fetch: server(brandingWith('ABC School'), seen: seen),
       );
       expect(
@@ -172,6 +176,7 @@ void main() {
       await expectLater(
         InstitutionBranding.fetch(
           Uri.parse('https://abc.digiedu.online'),
+          path: '/api/v1/branding',
           fetch: (url, {required maxBytes}) async => throw Exception('down'),
         ),
         throwsA(isA<ConfigException>()),

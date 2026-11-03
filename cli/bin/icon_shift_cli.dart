@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:args/command_runner.dart';
@@ -334,15 +335,21 @@ class _BrandCommand extends _Command {
       ..addOption(
         'host',
         help:
-            'School host serving GET /api/v1/branding, e.g. '
-            'https://abc.digiedu.online.',
+            'Tenant host serving the branding endpoint, e.g. '
+            'https://abc.example.com.',
+      )
+      ..addOption(
+        'branding-file',
+        help:
+            'Local JSON branding document, for a pipeline that already '
+            'fetched it.',
       )
       ..addOption('name', help: 'Institution name, instead of --host.')
       ..addOption('icon', help: 'Icon path or https URL, instead of --host.')
       ..addOption(
         'branding-path',
         defaultsTo: '/api/v1/branding',
-        help: 'Branding endpoint path on the school host.',
+        help: 'Branding endpoint path on the tenant host.',
       )
       ..addOption(
         'application-id',
@@ -402,23 +409,39 @@ class _BrandCommand extends _Command {
   Future<int> run() async {
     final a = argResults!;
     final host = a.option('host');
+    final file = a.option('branding-file');
     final manual = a.option('name');
-    if ((host == null) == (manual == null)) {
-      usageException('Pass --host <school url>, or --name (with --icon).');
+    if ([host, file, manual].where((v) => v != null).length != 1) {
+      usageException(
+        'Pass exactly one of --host <tenant url>, --branding-file <json> or '
+        '--name (with --icon).',
+      );
     }
 
     // --icon takes a project path or an https URL; planBranding downloads
     // the remote ones before generating.
-    final branding = host != null
-        ? await InstitutionBranding.fetch(
-            Uri.parse(host),
-            path: a.option('branding-path')!,
-          )
-        : InstitutionBranding(
-            tenantId: manual!,
-            appName: manual,
-            logoUrl: a.option('icon'),
-          );
+    final InstitutionBranding branding;
+    if (host != null) {
+      branding = await InstitutionBranding.fetch(
+        Uri.parse(host),
+        path: a.option('branding-path')!,
+      );
+    } else if (file != null) {
+      final source = File(p.isAbsolute(file) ? file : p.join(projectDir, file));
+      if (!source.existsSync()) {
+        throw ConfigException('Branding file "$file" not found.');
+      }
+      branding = InstitutionBranding.parse(
+        jsonDecode(source.readAsStringSync()),
+        tenantId: a.option('slug') ?? p.basenameWithoutExtension(file),
+      );
+    } else {
+      branding = InstitutionBranding(
+        tenantId: manual!,
+        appName: manual,
+        logoUrl: a.option('icon'),
+      );
+    }
 
     final branded = await planBranding(
       projectDir: projectDir,

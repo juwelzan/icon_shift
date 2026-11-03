@@ -7,16 +7,17 @@ import 'remote.dart' show RemoteFetch, httpGet;
 /// Largest branding document accepted from a server.
 const int maxBrandingBytes = 256 * 1024;
 
-/// One institution's branding, as the school's own server publishes it.
+/// One tenant's branding, as its server publishes it.
 ///
-/// DigiEdu / Schoolmate serves every school from its own host, and the
-/// bootstrap endpoint needs no login:
+/// IconShift assumes no particular API: point it at any endpoint that
+/// returns a JSON object, with or without a `data` envelope.
 ///
 /// ```
-/// GET https://<school>.digiedu.online/api/v1/branding
-/// {"data":{"app_name":"…","logo_url":null,"favicon_url":null,
-///          "primary_color":"#1e40af","secondary_color":"#3b82f6",
-///          "app_code":"588846"},"message":"…"}
+/// GET https://<tenant>.example.com/api/v1/branding
+/// {"data":{"app_name":"ABC School",
+///          "launcher_icon_url":"https://cdn.example.com/abc/icon.png",
+///          "primary_color":"#2563EB","secondary_color":"#4F46E5",
+///          "institution_id":"school_123"}}
 /// ```
 ///
 /// The runtime side parses the same document into `BrandingProfile`; this is
@@ -32,7 +33,7 @@ class InstitutionBranding {
     this.appCode,
   });
 
-  /// The school host; also the slug the build is named after.
+  /// The tenant host; also the slug the build is named after.
   final String tenantId;
 
   final String? appName;
@@ -50,7 +51,7 @@ class InstitutionBranding {
   String? get iconSource => launcherIconUrl ?? logoUrl;
 
   /// Lowercase, `[a-z0-9_]`, derived from the host:
-  /// `abc-school.digiedu.online` → `abc_school`. Used for the build profile,
+  /// `abc-school.example.com` → `abc_school`. Used for the build profile,
   /// artifact names and the Android applicationId.
   String get slug {
     final host = tenantId.split('.').first;
@@ -156,7 +157,7 @@ class InstitutionBranding {
     if (!host.isScheme('https') &&
         !(host.isScheme('http') &&
             (host.host == 'localhost' || host.host == '127.0.0.1'))) {
-      throw ConfigException('The school host must be https, got "$host".');
+      throw ConfigException('The tenant host must be https, got "$host".');
     }
     final url = host.replace(path: path);
     final Uint8List bytes;

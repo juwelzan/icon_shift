@@ -61,8 +61,8 @@ class BrandPlan {
 /// restores the working tree from the backup afterwards.
 ///
 /// [applicationIdTemplate] and [bundleIdTemplate] may contain `{slug}`, e.g.
-/// `com.digiedu.{slug}`. Without them the app keeps its own ids, which means
-/// one school's build replaces another's on the same device — fine for Mode
+/// `com.example.{slug}`. Without them the app keeps its own ids, which means
+/// one tenant's build replaces another's on the same device — fine for Mode
 /// A testing, wrong for store distribution.
 Future<BrandPlan> planBranding({
   required String projectDir,

@@ -371,6 +371,125 @@ void main() {
     });
   });
 
+  group('providers', () {
+    test('HttpBrandingProvider reads a JSON endpoint', () async {
+      final seen = <Uri>[];
+      final sentHeaders = <Map<String, String>>[];
+      final provider = HttpBrandingProvider(
+        url: Uri.parse('https://api.example.com/branding?tenant=school_123'),
+        tenantId: 'school_123',
+        headers: const {'Accept': 'application/json', 'X-Key': 'secret'},
+        download: (url, {required maxBytes, headers = const {}}) async {
+          seen.add(url);
+          sentHeaders.add(headers);
+          return Uint8List.fromList(utf8.encode(responseFor('ABC School')));
+        },
+      );
+      final profile = await provider.fetch();
+      expect(provider.tenantId, 'school_123');
+      expect(seen.single.host, 'api.example.com');
+      expect(sentHeaders.single['X-Key'], 'secret', reason: 'auth headers');
+      expect(profile.appName, 'ABC School');
+    });
+
+    test('host() builds one endpoint per tenant and refuses plain http', () {
+      final provider = HttpBrandingProvider.host(
+        Uri.parse('https://abc.example.com'),
+        path: '/api/v1/branding',
+      );
+      expect(provider.tenantId, 'abc.example.com');
+      expect(
+        provider.url,
+        Uri.parse('https://abc.example.com/api/v1/branding'),
+      );
+      expect(
+        () => HttpBrandingProvider.host(
+          Uri.parse('http://abc.example.com'),
+          path: '/b',
+        ),
+        throwsA(isA<InvalidArgumentException>()),
+        reason: 'plain http would expose the tenant host',
+      );
+    });
+
+    test('a field map adapts any response shape', () async {
+      const fields = BrandingFieldMap(
+        envelope: 'result',
+        appName: ['title'],
+        launcherIconUrl: ['icon'],
+        primaryColor: ['brand_colour'],
+        code: ['org'],
+      );
+      final profile = BrandingProfile.parse(
+        {
+          'result': {
+            'title': 'Northside College',
+            'icon': 'https://cdn.example.com/n.png',
+            'brand_colour': '#0F766E',
+            'org': 'north_1',
+          },
+        },
+        tenantId: 'north',
+        fields: fields,
+      );
+      expect(profile.appName, 'Northside College');
+      expect(
+        profile.launcherIconUrl,
+        Uri.parse('https://cdn.example.com/n.png'),
+      );
+      expect(profile.primaryColor, 0xFF0F766E);
+      expect(profile.appCode, 'north_1');
+    });
+
+    test('a response without an envelope is read directly', () {
+      const fields = BrandingFieldMap(envelope: null);
+      final profile = BrandingProfile.parse(
+        {
+          'app_name': 'Flat School',
+          'data': {'app_name': 'Should be ignored'},
+        },
+        tenantId: 't',
+        fields: fields,
+      );
+      expect(profile.appName, 'Flat School');
+      expect(profile.extras['data'], isA<Map>());
+    });
+
+    test('StaticBrandingProvider serves app-local branding', () async {
+      const profile = BrandingProfile(tenantId: 'local', appName: 'My App');
+      const provider = StaticBrandingProvider(profile);
+      expect(provider.tenantId, 'local');
+      expect(await provider.fetch(), profile);
+    });
+  });
+
+  group('applyBranding', () {
+    test('shows and caches a profile the app already has', () async {
+      final platform = FakePlatform(desktopLike);
+      final engine = IconShiftEngine(
+        platform: platform,
+        targetPlatform: IconShiftPlatform.macos,
+        assetBundle: FakeAssetBundle(demoAssets),
+      );
+      await engine.initialize(demoConfig);
+      final c = BrandingController(engine: engine);
+
+      final state = await c.apply(
+        const BrandingProfile(tenantId: 'pushed', appName: 'Pushed School'),
+      );
+      expect(state.status, BrandingStatus.live);
+      expect(c.tenantId, 'pushed');
+      expect(platform.savedSelection['branding_tenant'], 'pushed');
+
+      // Another tenant replaces it rather than sitting beside it.
+      await c.apply(
+        const BrandingProfile(tenantId: 'other', appName: 'Other School'),
+      );
+      expect(engine.readBranding('pushed'), isNull);
+      expect(engine.readBranding('other'), isNotNull);
+    });
+  });
+
   group('launcher branding', () {
     test('desktop applies the name and the downloaded icon', () async {
       final platform = FakePlatform(desktopLike);
