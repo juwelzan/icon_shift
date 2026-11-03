@@ -108,7 +108,11 @@ void main() {
       expect(r.scope, LauncherNameScope.unsupported);
       expect(r.status, OperationStatus.unsupported);
       expect(r.result.displayName.errorCode, IconShiftErrorCode.buildRequired);
-      expect(r.appEntryName, 'Schoolmate', reason: 'the app entry is untouched');
+      expect(
+        r.appEntryName,
+        'Schoolmate',
+        reason: 'the app entry is untouched',
+      );
       expect(r.availableNames, containsAll(['Schoolmate', 'ABC School']));
       expect(r.message, contains('"ABC School"'));
       expect(platform.iconKey, 'default');

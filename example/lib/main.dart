@@ -58,7 +58,6 @@ class _DemoPageState extends State<DemoPage> {
   ApplicationInfo? _info;
   PlatformCapabilities? _platformCapabilities;
   IconShiftResult? _lastResult;
-  ShortcutIdentityState? _shortcut;
   String? _batchIcon;
   bool _busy = false;
   final _name = TextEditingController(text: 'My Custom Name');
@@ -87,7 +86,6 @@ class _DemoPageState extends State<DemoPage> {
     final diagnostics = await IconShift.getDiagnostics();
     final info = await IconShift.getApplicationInfo();
     final platformCapabilities = await IconShift.getPlatformCapabilities();
-    final shortcut = await IconShift.getShortcutIdentity();
     if (!mounted) return;
     setState(() {
       _capabilities = capabilities;
@@ -97,7 +95,6 @@ class _DemoPageState extends State<DemoPage> {
       _diagnostics = diagnostics;
       _info = info;
       _platformCapabilities = platformCapabilities;
-      _shortcut = shortcut;
     });
   }
 
@@ -123,16 +120,15 @@ class _DemoPageState extends State<DemoPage> {
     }
   }
 
-  /// Renames the installed app's launcher entry (Android: among the names
-  /// compiled in, else a shortcut; iOS: not possible) and shows the result
-  /// as read back from the OS.
+  /// Renames the installed app's own launcher entry (Android: among the
+  /// names compiled in; iOS: not possible) and shows the result as read
+  /// back from the OS.
   Future<void> _changeLauncherName() async {
     setState(() => _busy = true);
     try {
       final r = await IconShift.changeLauncherName(_name.text.trim());
       final where = switch (r.scope) {
         LauncherNameScope.appEntry => 'Home screen and app drawer',
-        LauncherNameScope.shortcut => 'Home-screen shortcut',
         LauncherNameScope.windowTitle => 'Window title',
         LauncherNameScope.unsupported => 'Not possible here',
       };
@@ -142,7 +138,6 @@ class _DemoPageState extends State<DemoPage> {
             content: Text(
               '$where: ${r.status.name}\n'
               'App entry now: ${r.appEntryName ?? '?'}'
-              '${r.shortcutName == null ? '' : '\nShortcut: ${r.shortcutName}'}'
               '${r.message == null ? '' : '\n${r.message}'}',
             ),
           ),
@@ -209,7 +204,6 @@ class _DemoPageState extends State<DemoPage> {
                   _variantsCard(caps),
                   _customCard(caps),
                   _remoteCard(),
-                  _shortcutCard(caps),
                   if (_lastResult != null) _resultCard(_lastResult!),
                   _validationCard(),
                   _diagnosticsCard(),
@@ -269,7 +263,6 @@ class _DemoPageState extends State<DemoPage> {
     IdentityScope.taskSwitcher => 'Recent apps',
     IdentityScope.windowTitle => 'Window title',
     IdentityScope.browserTab => 'Browser tab',
-    IdentityScope.launcherShortcut => 'Home-screen shortcut',
     IdentityScope.runningApp => 'Dock / taskbar',
     IdentityScope.none => 'Nowhere',
   };
@@ -291,8 +284,6 @@ class _DemoPageState extends State<DemoPage> {
         '${_whereNameShows(caps.displayName.scope)} (runtime): '
         '${s.nativeDisplayName ?? 'unknown'}',
       ),
-      if (_shortcut?.isPinned ?? false)
-        Text('Home-screen shortcut: ${_shortcut!.name}'),
       const SizedBox(height: 4),
       Text(
         'Requested: identity=${s.requestedIdentity ?? '-'}, '
@@ -459,57 +450,6 @@ class _DemoPageState extends State<DemoPage> {
       child: const Text('Download and apply'),
     ),
   ]);
-
-  /// Any name and any icon, on every platform that allows it at all. On
-  /// Android this is a home-screen shortcut: the only launcher entry whose
-  /// name and image are not compiled into the build.
-  Widget _shortcutCard(IconShiftCapabilities caps) {
-    final state = _shortcut;
-    return _section('Any name + icon (setArbitraryIdentity)', [
-      Text(
-        caps.canShowArbitraryIdentity
-            ? 'Uses the name typed above and the icon picked for the '
-                  'combined update.'
-            : 'This platform cannot show a name chosen at runtime anywhere.',
-        style: Theme.of(context).textTheme.bodySmall,
-      ),
-      if (caps.shortcut.limitation case final limitation?)
-        Text(limitation, style: Theme.of(context).textTheme.bodySmall),
-      if (state != null)
-        Text(
-          'Shortcut: ${state.isPinned
-              ? 'on the home screen as "${state.name}"'
-              : state.isSupported
-              ? 'not placed yet'
-              : 'unavailable'}',
-        ),
-      Wrap(
-        spacing: 8,
-        children: [
-          OutlinedButton(
-            key: const ValueKey('set-anywhere'),
-            onPressed: _busy
-                ? null
-                : () => _run(
-                    () => IconShift.setArbitraryIdentity(
-                      name: _name.text,
-                      variant: _batchIcon,
-                    ),
-                  ),
-            child: const Text('Apply name + icon'),
-          ),
-          if (state?.isPinned ?? false)
-            OutlinedButton(
-              key: const ValueKey('remove-shortcut'),
-              onPressed: _busy
-                  ? null
-                  : () => _run(IconShift.removeShortcutIdentity),
-              child: const Text('Disable shortcut'),
-            ),
-        ],
-      ),
-    ]);
-  }
 
   Widget _resultCard(IconShiftResult r) => _section('Last result', [
     Text('Icon: ${r.icon}'),

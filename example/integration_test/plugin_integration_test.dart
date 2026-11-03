@@ -29,9 +29,8 @@ void main() {
       case IconShiftPlatform.android:
         expect(caps.icon.scope, IdentityScope.launcher);
         expect(caps.iconAndNameLinked, isTrue);
-        // The arbitrary name reaches the recent-apps label, and a pinned
-        // shortcut carries any name and icon; the app's own launcher entry
-        // still only shows what the build compiled in.
+        // An arbitrary name reaches the recent-apps label; the launcher
+        // entry shows the labels compiled into the activity-aliases.
         expect(caps.displayName.scope, IdentityScope.taskSwitcher);
         expect(caps.icon.acceptsArbitraryValues, isFalse);
       case IconShiftPlatform.ios:
