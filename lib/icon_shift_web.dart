@@ -118,7 +118,8 @@ class IconShiftWeb extends IconShiftPlatformInterface {
     }
 
     final assetKey = request.assetKey;
-    if (assetKey == null) {
+    final remote = request.url;
+    if (assetKey == null && remote == null) {
       throw PlatformException(
         code: NativeErrorCodes.invalidArgument,
         message: 'No icon asset for variant "${request.key}".',
@@ -126,9 +127,9 @@ class IconShiftWeb extends IconShiftPlatformInterface {
     }
     final link = _document.createElement('link') as web.HTMLLinkElement
       ..rel = 'icon'
-      ..href = ui_web.assetManager.getAssetUrl(assetKey)
+      ..href = remote?.toString() ?? ui_web.assetManager.getAssetUrl(assetKey!)
       ..setAttribute(_ownedAttribute, request.key);
-    final type = _mimeType(assetKey);
+    final type = _mimeType(remote?.path ?? assetKey!);
     if (type != null) link.type = type;
     head.append(link);
     _iconKey = request.key;

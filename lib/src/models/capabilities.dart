@@ -16,6 +16,10 @@ enum IdentityScope {
   /// The browser tab (favicon, document title).
   browserTab,
 
+  /// The app's entry in the recent-apps / task switcher screen (Android
+  /// task label).
+  taskSwitcher,
+
   /// Not supported.
   none,
 }

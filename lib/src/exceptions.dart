@@ -49,6 +49,9 @@ enum IconShiftErrorCode {
   /// The native call failed; see the message for the OS error.
   nativeOperationFailed,
 
+  /// A remote icon could not be downloaded or is not an image.
+  downloadFailed,
+
   /// Some operations of a combined update did not succeed.
   partialUpdate,
 }
@@ -60,6 +63,7 @@ enum IconShiftOperation {
   setIcon,
   setDisplayName,
   setCustomIdentity,
+  setRemoteIcon,
   restoreDefault,
   query,
 }

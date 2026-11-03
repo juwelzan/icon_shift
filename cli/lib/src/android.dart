@@ -136,6 +136,16 @@ ${monochrome == null ? '' : '    <monochrome android:drawable="@mipmap/${name}_m
     }
   }
 
+  final appName = config.application?.displayName;
+  final launcherName = config.resolve(defaultVariantId, 'android').name;
+  if (appName != null && launcherName != null && appName != launcherName) {
+    plan.warn(
+      'Android: the launcher shows the activity-alias label "$launcherName" '
+      '(default name in icon_shift.yaml), not application.display_name '
+      '"$appName". Remove default.name for Android, or make them equal, if '
+      'the launcher should show "$appName".',
+    );
+  }
   _planValues(config, plan, resDir, adaptive);
   _planStaleCleanup(plan, resDir, owned);
   _planManifest(config, plan, iconResource);

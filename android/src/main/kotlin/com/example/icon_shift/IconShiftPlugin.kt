@@ -1,10 +1,14 @@
 package com.example.icon_shift
 
+import android.app.Activity
+import android.app.ActivityManager
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
 import android.util.Log
 import io.flutter.embedding.engine.plugins.FlutterPlugin
+import io.flutter.embedding.engine.plugins.activity.ActivityAware
+import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler
@@ -16,11 +20,19 @@ import io.flutter.plugin.common.MethodChannel.Result
  * Each variant is an `<activity-alias>` with its own icon and label and the
  * meta-data `icon_shift.variant`; exactly one is enabled at a time. See
  * docs/PLATFORM_CAPABILITIES.md.
+ *
+ * The launcher label belongs to the alias, so it only changes with the
+ * variant. The recent-apps (task) label is set at runtime: it follows the
+ * active alias, or an arbitrary name from setDisplayName.
  */
-class IconShiftPlugin : FlutterPlugin, MethodCallHandler {
+class IconShiftPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
     private lateinit var channel: MethodChannel
     private lateinit var context: Context
     private lateinit var registry: AliasRegistry
+    private var activity: Activity? = null
+
+    /** Name from setDisplayName; null shows the active alias label. */
+    private var customLabel: String? = null
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         context = binding.applicationContext
@@ -53,18 +65,81 @@ class IconShiftPlugin : FlutterPlugin, MethodCallHandler {
         channel.setMethodCallHandler(null)
     }
 
+    override fun onAttachedToActivity(binding: ActivityPluginBinding) {
+        activity = binding.activity
+        if (customLabel != null) applyTaskLabel()
+    }
+
+    override fun onDetachedFromActivityForConfigChanges() {
+        activity = null
+    }
+
+    override fun onReattachedToActivityForConfigChanges(binding: ActivityPluginBinding) {
+        onAttachedToActivity(binding)
+    }
+
+    override fun onDetachedFromActivity() {
+        activity = null
+    }
+
+    /** The label of the active alias, or null when none is active. */
+    private fun activeAliasLabel(): String? {
+        val aliases = registry.aliases()
+        val active = AliasSwitchPlanner.activeVariant(registry.states(aliases))
+        return aliases.firstOrNull { it.variantId == active }?.label
+    }
+
+    /**
+     * Shows [customLabel] (or the active alias label) in the recent-apps
+     * screen. A running task keeps the label of the alias it was launched
+     * from until it is set here. Returns false without an activity.
+     */
+    private fun applyTaskLabel(): Boolean {
+        val target = activity ?: return false
+        val label = customLabel ?: activeAliasLabel() ?: return true
+        @Suppress("DEPRECATION")
+        val description = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            ActivityManager.TaskDescription.Builder().setLabel(label).build()
+        } else {
+            ActivityManager.TaskDescription(label)
+        }
+        target.runOnUiThread { target.setTaskDescription(description) }
+        return true
+    }
+
+    private fun setDisplayName(name: String?, result: Result) {
+        if (name != null && name.isBlank()) {
+            result.error("invalid_argument", "The display name must not be blank.", null)
+            return
+        }
+        val current = customLabel ?: activeAliasLabel()
+        customLabel = name
+        val target = name ?: activeAliasLabel()
+        when {
+            !applyTaskLabel() -> result.success(
+                mapOf(
+                    "status" to "pending",
+                    "message" to "No activity yet; the recent-apps label is set when it starts.",
+                ),
+            )
+            target == current -> result.success(mapOf("status" to "unchanged"))
+            else -> result.success(
+                mapOf(
+                    "status" to "applied",
+                    "message" to "Shown in the recent-apps screen. The launcher label only changes " +
+                        "with setIdentity() (activity-alias labels are compiled into the app).",
+                ),
+            )
+        }
+    }
+
     override fun onMethodCall(call: MethodCall, result: Result) {
         try {
             when (call.method) {
                 "getCapabilities" -> result.success(capabilities())
                 "getNativeState" -> result.success(nativeState())
                 "setIcon" -> setIcon(call.argument<String>("key"), result)
-                "setDisplayName" -> result.error(
-                    "unsupported",
-                    "Android launcher labels are compiled into activity-aliases. " +
-                        "Use setIdentity() with a preconfigured variant.",
-                    null,
-                )
+                "setDisplayName" -> setDisplayName(call.argument<String>("name"), result)
                 "inspect" -> result.success(inspect(call.argument<List<Map<String, Any?>>>("variants").orEmpty()))
                 "getApplicationInfo" -> result.success(applicationInfo())
                 "loadSelection" -> result.success(SelectionStore(context).load())
@@ -101,11 +176,21 @@ class IconShiftPlugin : FlutterPlugin, MethodCallHandler {
         )
         return mapOf(
             "icon" to capability(),
-            "displayName" to capability(),
+            "displayName" to mapOf(
+                "supported" to true,
+                "scope" to "taskSwitcher",
+                "persistsNatively" to false,
+                "requiresPreconfiguredResources" to false,
+                "acceptsArbitraryValues" to true,
+                "limitation" to "Any name is shown in the recent-apps screen. The launcher label changes " +
+                    "only with setIdentity(), to the label compiled into the variant's activity-alias.",
+            ),
             "iconAndNameLinked" to true,
             "notes" to listOf(
                 "Launchers cache icons; some take a few seconds or a launcher restart to update.",
                 "Home-screen shortcuts pinned to a disabled alias are removed by most launchers.",
+                "MaterialApp.title also sets the recent-apps label on every rebuild; bind it to " +
+                    "IconShift.displayNameListenable so it does not undo a change.",
             ),
         )
     }
@@ -115,7 +200,7 @@ class IconShiftPlugin : FlutterPlugin, MethodCallHandler {
         val active = AliasSwitchPlanner.activeVariant(registry.states(aliases))
         return mapOf(
             "iconKey" to active,
-            "displayName" to aliases.firstOrNull { it.variantId == active }?.label,
+            "displayName" to (customLabel ?: aliases.firstOrNull { it.variantId == active }?.label),
         )
     }
 
@@ -138,12 +223,20 @@ class IconShiftPlugin : FlutterPlugin, MethodCallHandler {
                 "Several activity-aliases declare variant \"$key\": ${plan.components.joinToString()}.",
                 null,
             )
-            SwitchPlan.Unchanged -> result.success(mapOf("status" to "unchanged", "displayName" to label))
+            SwitchPlan.Unchanged -> {
+                // Switching to the active variant still drops a custom name.
+                customLabel = null
+                applyTaskLabel()
+                result.success(mapOf("status" to "unchanged", "displayName" to label))
+            }
             is SwitchPlan.Apply -> {
                 registry.apply(plan.steps)
                 // Read back instead of assuming success.
                 val active = AliasSwitchPlanner.activeVariant(registry.states(registry.aliases()))
                 if (active == key) {
+                    // The running task still shows the old alias label.
+                    customLabel = null
+                    applyTaskLabel()
                     result.success(mapOf("status" to "applied", "displayName" to label))
                 } else {
                     result.error(
@@ -249,9 +342,8 @@ class IconShiftPlugin : FlutterPlugin, MethodCallHandler {
             @Suppress("DEPRECATION")
             info.versionCode.toLong()
         }
-        val state = nativeState()
         return mapOf(
-            "displayName" to (state["displayName"] as String? ?: context.applicationInfo.loadLabel(pm).toString()),
+            "displayName" to (activeAliasLabel() ?: context.applicationInfo.loadLabel(pm).toString()),
             "applicationId" to context.packageName,
             "version" to info.versionName,
             "buildNumber" to buildNumber.toString(),

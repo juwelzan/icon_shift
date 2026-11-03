@@ -212,8 +212,9 @@ identityPropertyTable = {
   },
   IdentityProperty.windowTitle: {
     IconShiftPlatform.android: PropertySupport(
-      runtime: RuntimeSupport.none,
-      note: 'Recents title comes from MaterialApp.title.',
+      runtime: RuntimeSupport.sessionOnly,
+      note:
+          'Recent-apps (task) label: setDisplayName sets it; bind MaterialApp.title to IconShift.displayNameListenable.',
     ),
     IconShiftPlatform.ios: PropertySupport(
       runtime: RuntimeSupport.none,

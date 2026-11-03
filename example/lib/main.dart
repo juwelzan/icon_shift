@@ -17,40 +17,33 @@ Future<void> main() async {
   runApp(DemoApp(initError: initError));
 }
 
-class DemoApp extends StatefulWidget {
+class DemoApp extends StatelessWidget {
   const DemoApp({super.key, this.initError});
 
   final Object? initError;
 
   @override
-  State<DemoApp> createState() => _DemoAppState();
-}
-
-class _DemoAppState extends State<DemoApp> {
-  // On web, MaterialApp.title writes document.title on rebuild; keep it in
-  // sync with IconShift so it does not undo setDisplayName.
-  String _title = iconShiftConfig.defaultIdentity.name ?? 'IconShift';
-
-  @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: _title,
-      theme: ThemeData(colorSchemeSeed: Colors.teal, useMaterial3: true),
-      home: widget.initError != null
-          ? Scaffold(
-              body: Center(
-                child: Text('IconShift failed: ${widget.initError}'),
-              ),
-            )
-          : DemoPage(onTitle: (t) => setState(() => _title = t)),
+    // MaterialApp.title becomes the Android recent-apps label and the web
+    // document title on every rebuild; following IconShift keeps it from
+    // undoing setDisplayName / setIdentity.
+    return ValueListenableBuilder<String?>(
+      valueListenable: IconShift.displayNameListenable,
+      builder: (context, name, _) => MaterialApp(
+        title: name ?? iconShiftConfig.defaultIdentity.name ?? 'IconShift',
+        theme: ThemeData(colorSchemeSeed: Colors.teal, useMaterial3: true),
+        home: initError != null
+            ? Scaffold(
+                body: Center(child: Text('IconShift failed: $initError')),
+              )
+            : const DemoPage(),
+      ),
     );
   }
 }
 
 class DemoPage extends StatefulWidget {
-  const DemoPage({super.key, required this.onTitle});
-
-  final ValueChanged<String> onTitle;
+  const DemoPage({super.key});
 
   @override
   State<DemoPage> createState() => _DemoPageState();
@@ -68,6 +61,9 @@ class _DemoPageState extends State<DemoPage> {
   String? _batchIcon;
   bool _busy = false;
   final _name = TextEditingController(text: 'My Custom Name');
+  final _remoteUrl = TextEditingController(
+    text: 'https://example.com/icon_shift/remote_icon.json',
+  );
 
   @override
   void initState() {
@@ -78,6 +74,7 @@ class _DemoPageState extends State<DemoPage> {
   @override
   void dispose() {
     _name.dispose();
+    _remoteUrl.dispose();
     super.dispose();
   }
 
@@ -99,11 +96,6 @@ class _DemoPageState extends State<DemoPage> {
       _info = info;
       _platformCapabilities = platformCapabilities;
     });
-    final native = state.nativeDisplayName;
-    if (native != null &&
-        capabilities.displayName.scope == IdentityScope.browserTab) {
-      widget.onTitle(native);
-    }
   }
 
   Future<void> _run(Future<IconShiftResult> Function() action) async {
@@ -160,6 +152,7 @@ class _DemoPageState extends State<DemoPage> {
                   _stateCard(),
                   _variantsCard(caps),
                   _customCard(caps),
+                  _remoteCard(),
                   if (_lastResult != null) _resultCard(_lastResult!),
                   _validationCard(),
                   _diagnosticsCard(),
@@ -347,6 +340,29 @@ class _DemoPageState extends State<DemoPage> {
       ),
     ]);
   }
+
+  /// A server publishes RemoteIcon JSON (icon + dark/tinted/clear URLs and
+  /// an optional bundled variant for iOS/Android).
+  Widget _remoteCard() => _section('Remote icon (from a server)', [
+    TextField(
+      key: const ValueKey('remote-url'),
+      controller: _remoteUrl,
+      decoration: const InputDecoration(labelText: 'RemoteIcon JSON URL'),
+    ),
+    const SizedBox(height: 8),
+    OutlinedButton(
+      key: const ValueKey('apply-remote'),
+      onPressed: _busy
+          ? null
+          : () => _run(() async {
+              final icon = await IconShift.fetchRemoteIcon(
+                Uri.parse(_remoteUrl.text.trim()),
+              );
+              return IconShift.setRemoteIcon(icon);
+            }),
+      child: const Text('Download and apply'),
+    ),
+  ]);
 
   Widget _resultCard(IconShiftResult r) => _section('Last result', [
     Text('Icon: ${r.icon}'),

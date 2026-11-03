@@ -15,11 +15,12 @@ all three in sync.
 | Property | Android | iOS | macOS | Windows | Linux | Web |
 | --- | --- | --- | --- | --- | --- | --- |
 | Display name (launcher) | R·pre (alias label) | B | B | B | B | B (manifest) |
-| Window / document title | — | — | R·session | R·session | R·session | R·session |
+| Window / document title | R·session (recent-apps label) | — | R·session | R·session | R·session | R·session |
 | Launcher icon | R·pre (alias) | R·pre (alternate icon) | B | B | B | B (manifest) |
 | Running-app icon | — | — | R·session (Dock) | R·session (title bar/taskbar) | R·session (X11 only) | R·session (favicon) |
 | Adaptive / maskable icon | R·pre (part of alias) + B | — | — | — | — | B |
-| Themed icon (monochrome, dark, tinted) | B (user enables) | B (system applies) | B (system applies) | — | — | R·session (favicon per scheme) + B |
+| Themed icon (monochrome, dark, tinted, clear) | B (user enables) | B (system applies dark/tinted; derives clear) | R·session (dark Dock icon) + B | R·session (dark icon) | R·session (dark icon) | R·session (dark favicon) + B |
+| Downloaded (server) icon | — (build it in: `remote:`) | — (build it in: `remote:`) | R·session | R·session | R·session | R·session |
 | Theme color | — | — | — | — | — | R·session + B |
 | Application id (package / bundle / app id) | B, **new app** | B, **new app** | B, **new app** | B (MSIX), **new app** | B, **new app** | B (manifest id), new PWA |
 | Gradle namespace | B | — | — | — | — | — |
@@ -70,10 +71,17 @@ alias before disabling the old one**, then reads the state back.
   missing aliases when the app starts.
 * Launchers cache icons (seconds to a launcher restart on some OEMs).
   Pinned shortcuts to a disabled alias are removed by most launchers.
-* The recents title comes from `MaterialApp.title`.
+* The recent-apps label follows the active alias after a switch, and
+  `setDisplayName` sets it to any string (`Activity.setTaskDescription`).
+  `MaterialApp.title` sets it too on every rebuild — bind it to
+  `IconShift.displayNameListenable`.
+* Downloaded images can never become the launcher icon; server icons are
+  added at build time (`remote:` in icon_shift.yaml).
 
 **Build time.** `applicationId` (new app, separate data), `namespace` (moves
-Kotlin/Java sources), `<application android:label>`, version (pubspec).
+Kotlin/Java sources), `<application android:label>` **and the IconShift
+alias labels that show the default name** (the launcher shows alias labels,
+not the application label), version (pubspec).
 Signing is never touched; a different key cannot update an installed app.
 
 ### iOS

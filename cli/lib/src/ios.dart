@@ -31,6 +31,18 @@ void planIos(GeneratorConfig config, Plan plan, Map<String, SourceIcon> icons) {
   }
 
   final planned = <String>{};
+  final withClear = <String>[
+    for (final id in config.variantIds)
+      if (config.resolve(id, 'ios').appearances.clear != null) id,
+  ];
+  if (withClear.isNotEmpty) {
+    plan.info(
+      'iOS: asset catalogs have no slot for clear artwork (${withClear.join(', ')}); '
+      'iOS 26 derives the clear Liquid Glass look from the regular icon. The '
+      'clear image is kept for in-app previews. Dark and tinted are written '
+      'into the icon sets and iOS switches between them by itself.',
+    );
+  }
   for (final id in config.variants.keys) {
     final r = config.resolve(id, 'ios');
     if (r.usesDefaultIcon) continue; // Uses the primary icon.
@@ -155,12 +167,12 @@ bool _planIconSet(
   // Dark artwork keeps its transparency (iOS composites it on a dark
   // background); tinted artwork is a grayscale image.
   add(
-    r.override?.dark,
+    r.appearances.dark,
     'icon_1024_dark.png',
     appearance: 'dark',
     flattenAlpha: false,
   );
-  add(r.override?.tinted, 'icon_1024_tinted.png', appearance: 'tinted');
+  add(r.appearances.tinted, 'icon_1024_tinted.png', appearance: 'tinted');
   if (!ok) return false;
 
   plan.writeString(

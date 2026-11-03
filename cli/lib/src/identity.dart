@@ -3,8 +3,10 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 
+import 'android.dart' show androidString;
 import 'config.dart';
 import 'edits.dart';
+import 'ownership.dart';
 import 'plan.dart';
 
 /// Build-time application identity (`application:` in icon_shift.yaml).
@@ -650,6 +652,7 @@ void _planAndroid(
   }
   if (id.displayName case final name?) {
     _planAndroidLabel(projectDir, manifest, name, plan);
+    _planAndroidAliasLabels(projectDir, name, plan);
   }
   if (id.androidApplicationId != null &&
       id.androidApplicationId != current.get('android', 'applicationId')) {
@@ -693,6 +696,52 @@ void _planAndroidLabel(
       ),
     ]);
   }
+}
+
+/// The launcher shows the labels of IconShift's activity-aliases, not
+/// `<application android:label>`, so a new display name must reach them
+/// too: every alias that shows the default label gets [name]; variants with
+/// their own name keep it.
+void _planAndroidAliasLabels(String projectDir, String name, Plan plan) {
+  const res = 'android/app/src/main/res';
+  const values = '$res/values/icon_shift.xml';
+  final content = plan.pendingContent(values) ?? _read(projectDir, values);
+  if (content == null || !hasGeneratedMarker(content)) return;
+  final current = RegExp(
+    r'<string name="icon_shift_label_default">([^<]*)</string>',
+  ).firstMatch(content)?.group(1);
+  // Without a default label the alias inherits the application label.
+  if (current == null) return;
+  final label = androidString(name);
+  if (current == label) return;
+  final ok = editFile(plan, values, [
+    Replacement(
+      'IconShift launcher labels',
+      RegExp(
+        '(<string name="icon_shift_label_[a-z0-9_]+">)'
+        '${RegExp.escape(current)}(</string>)',
+      ),
+      (m) => '${m[1]}$label${m[2]}',
+      count: null,
+    ),
+  ]);
+  if (!ok) return;
+  final resDir = Directory(p.join(projectDir, res));
+  final localized =
+      resDir.existsSync() &&
+      resDir.listSync().whereType<Directory>().any(
+        (d) =>
+            p.basename(d.path).startsWith('values-') &&
+            File(p.join(d.path, 'icon_shift.xml')).existsSync(),
+      );
+  plan.warn(
+    'Android: the launcher shows the IconShift activity-alias labels, not '
+    '<application android:label>, so the aliases that showed "$current" now '
+    'show "$name" as well. `icon_shift_cli generate` rewrites these labels '
+    'from icon_shift.yaml: set default.name (or default.platforms.android.name) '
+    'to "$name" there to keep it.'
+    '${localized ? ' Translations in values-*/icon_shift.xml still win for those languages.' : ''}',
+  );
 }
 
 /// Moves Kotlin/Java sources from [from] to [to] and updates package lines.

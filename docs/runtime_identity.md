@@ -85,10 +85,63 @@ IconShift keeps these apart:
 | Property | Example | Runtime? |
 | --- | --- | --- |
 | Display name (launcher) | "Notes" under the icon | Android (preconfigured) only |
+| Recent-apps label | Android task switcher | Android (any string) |
 | Window / document title | macOS window title, browser tab | desktop, web |
 | Executable file name | `notes.exe` | never (build time) |
 | Application id / package / bundle id | `com.acme.notes` | never (build time; new app) |
 | Shortcut name | Start-menu entry | never (installer-owned) |
+
+### Android names
+
+The launcher label comes from the active activity-alias, so it changes only
+with `setIdentity()` (to that variant's compiled label). Two things change
+at runtime:
+
+* the **recent-apps label** follows the active alias right after a switch
+  (before, the running task kept the label of the alias it was launched
+  from), and
+* `setDisplayName('Anything')` sets it to any string (scope
+  `IdentityScope.taskSwitcher`); `setIdentity()` resets it to the alias label.
+
+Flutter's `MaterialApp.title` writes the same recent-apps label (and the web
+document title) on every rebuild. Bind it to IconShift so a rebuild does not
+undo a change:
+
+```dart
+ValueListenableBuilder<String?>(
+  valueListenable: IconShift.displayNameListenable,
+  builder: (context, name, _) => MaterialApp(title: name ?? 'Notes', home: …),
+)
+```
+
+## Remote icons
+
+```dart
+final icon = await IconShift.fetchRemoteIcon(
+  Uri.parse('https://example.com/app-icon.json'),
+);
+final result = await IconShift.setRemoteIcon(icon);
+// or: RemoteIcon(url: Uri.parse('https://…/icon.png'), dark: …, variant: 'halloween')
+```
+
+```json
+{
+  "id": "halloween_2026",
+  "variant": "halloween",
+  "name": "Spooky Notes",
+  "icon": "https://cdn.example.com/icons/halloween.png",
+  "appearances": { "dark": "halloween_dark.png", "tinted": "…", "clear": "…" }
+}
+```
+
+| Platform | What `setRemoteIcon` does |
+| --- | --- |
+| macOS, Windows, Linux | Downloads (https, ≤ 5 MB, must be an image) and applies it; `dark` while the system is dark. Re-downloaded and re-applied on the next launch. |
+| Web | Uses the URL as favicon (the server must allow the page to load it). |
+| iOS, Android | Cannot show downloaded images. Switches to `variant` when it is part of this build (the OS then applies its dark/tinted/clear artwork); otherwise returns `unsupported` with `buildRequired`. Ship server icons in the build with `remote:` in icon_shift.yaml ([icon configuration](icon_configuration.md#server-provided-icons)). |
+
+Download problems are `failed` outcomes with `IconShiftErrorCode.downloadFailed`;
+nothing is saved then.
 
 ## Persistence and recovery
 
@@ -102,6 +155,12 @@ The selection is persisted natively. On `initialize()`:
   enabled alias was retired or none is enabled.
 
 ## Theme-aware identities
+
+Icons with `appearances.dark` need no code: with
+`initialize(followSystemAppearance: true)` (the default) macOS, Windows,
+Linux and web show the dark artwork while the system is dark; iOS applies
+its icon-set appearances itself. To switch whole *variants* (name included)
+by brightness:
 
 ```dart
 final sync = IconShiftThemeSync()..start(); // dark ↔ default by system brightness

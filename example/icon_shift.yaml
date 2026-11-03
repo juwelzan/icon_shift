@@ -34,6 +34,22 @@ variants:
 dart:
   output: lib/icon_shift_config.g.dart
 
+# Liquid Glass modes (iOS 26 / macOS 26) and server icons, e.g.:
+#
+#   variants:
+#     night:
+#       icon: assets/icons/night.png
+#       appearances:
+#         dark: assets/icons/night_dark.png      # Dark
+#         tinted: assets/icons/night_tinted.png  # Tinted (grayscale)
+#         clear: assets/icons/night_clear.png    # Clear (previews only)
+#     summer:
+#       icon: https://cdn.example.com/icons/summer.png
+#
+#   remote:
+#     manifest: https://cdn.example.com/icons/manifest.json
+#     assets_dir: assets/icon_shift/remote       # list it under flutter > assets
+
 # Build-time identity (never applied to an installed app).
 application:
   display_name: IconShift Demo

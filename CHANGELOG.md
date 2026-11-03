@@ -1,3 +1,39 @@
+## Unreleased
+
+Runtime (`icon_shift`):
+
+* Icon appearances for the iOS 26 / macOS 26 home-screen modes:
+  `IconAppearances(dark:, tinted:, clear:)` on `AppIdentity` and
+  `IdentityOverride`, resolved with the icon they belong to
+  (`ResolvedIdentity.appearances`, `iconFor(IconAppearanceMode)`).
+* macOS, Windows, Linux and web show the dark artwork while the system is in
+  dark mode and follow changes (`initialize(followSystemAppearance:)`,
+  `refreshAppearance()`).
+* Remote icons: `RemoteIcon` (JSON with dark/tinted/clear URLs and a bundled
+  fallback `variant`), `IconShift.fetchRemoteIcon()` and
+  `IconShift.setRemoteIcon()`. Desktop downloads and applies the image, web
+  uses the URL as favicon, iOS/Android switch to the bundled variant.
+  New `IconShiftErrorCode.downloadFailed`, `IconShiftOperation.setRemoteIcon`.
+* Android display name: the recent-apps label now follows the active alias
+  right after a switch, and `setDisplayName()` sets it to any string
+  (`IdentityScope.taskSwitcher`) instead of returning `unsupported`.
+* `IconShift.displayNameListenable` for binding `MaterialApp.title`, which
+  otherwise overwrites the Android recent-apps label and web title.
+
+Build time (`icon_shift_cli`):
+
+* `appearances: {dark, tinted, clear}` on identities; `clear` on
+  `platforms.ios` / `platforms.macos`; `dark` on desktop/web overrides.
+  iOS icon sets get dark/tinted; the generated Dart config carries all of
+  them.
+* Images may be `https://` URLs, and `remote.manifest` merges variants
+  published by a server. Downloads are validated, cached in
+  `remote.assets_dir`, and refreshed with `generate --refresh-remote`.
+* Fix: `identity --apply` with a `display_name` did not change the Android
+  launcher name, because the launcher shows the IconShift alias labels; it
+  now updates the aliases that show the default name. `generate` warns when
+  `application.display_name` and the launcher label differ.
+
 ## 0.2.0
 
 Runtime (`icon_shift`):

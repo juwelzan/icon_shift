@@ -1,7 +1,9 @@
 import 'package:flutter/foundation.dart';
-import 'package:flutter/widgets.dart' show WidgetsBinding;
+import 'package:flutter/widgets.dart'
+    show Brightness, WidgetsBinding, WidgetsBindingObserver;
 import 'package:meta/meta.dart' show useResult;
 
+import 'config/app_identity.dart';
 import 'config/icon_shift_config.dart';
 import 'config/platform.dart';
 import 'engine.dart';
@@ -12,6 +14,7 @@ import 'models/diagnostics.dart';
 import 'models/identity_properties.dart';
 import 'models/identity_variant.dart';
 import 'models/preview.dart';
+import 'models/remote_icon.dart';
 import 'models/result.dart';
 import 'models/state.dart';
 import 'models/validation.dart';
@@ -48,22 +51,49 @@ abstract final class IconShift {
   /// Names are localized for [locale] (`de`, `pt_BR`; default: the device
   /// locale) where [AppIdentity.localizedNames] are configured.
   ///
+  /// With [followSystemAppearance] (the default), platforms that apply
+  /// icon images at runtime (macOS, Windows, Linux, web) show the
+  /// [IconAppearances.dark] artwork of the current icon while the system is
+  /// in dark mode, and switch back when it changes. iOS needs no help: it
+  /// picks the dark/tinted artwork compiled into the icon set itself.
+  ///
   /// Can be called again (e.g. after hot restart) to replace the config.
   static Future<void> initialize(
     IconShiftConfig config, {
     bool restoreSelection = true,
     String? locale,
+    bool followSystemAppearance = true,
   }) async {
     final engine = IconShiftEngine(
       platform: IconShiftPlatformInterface.instance,
       targetPlatform: IconShiftPlatform.current,
       locale: locale ?? _deviceLocale(),
+      systemAppearance: followSystemAppearance ? _systemAppearance : null,
+      displayNameNotifier: _displayName,
     );
     await engine.initialize(config, restoreSelection: restoreSelection);
     _engine = engine;
+    _AppearanceObserver.instance.enabled = followSystemAppearance;
   }
 
   static bool get isInitialized => _engine?.isInitialized ?? false;
+
+  static final _displayName = ValueNotifier<String?>(null);
+
+  /// The name the app currently presents: the custom name from
+  /// [setDisplayName], else the selected variant's name (localized).
+  ///
+  /// Bind `MaterialApp.title` to it. Flutter writes that title into the
+  /// Android recent-apps label and the web document title on every rebuild,
+  /// which would otherwise undo [setDisplayName] / [setIdentity]:
+  ///
+  /// ```dart
+  /// ValueListenableBuilder<String?>(
+  ///   valueListenable: IconShift.displayNameListenable,
+  ///   builder: (context, name, _) => MaterialApp(title: name ?? 'My App'),
+  /// )
+  /// ```
+  static ValueListenable<String?> get displayNameListenable => _displayName;
 
   /// The configuration passed to [initialize].
   static IconShiftConfig get config => _require.config;
@@ -106,6 +136,35 @@ abstract final class IconShift {
     iconVariant: iconVariant,
     displayName: displayName,
   );
+
+  /// Applies an icon published by a server. On macOS, Windows and Linux it
+  /// is downloaded and shown (its dark artwork in dark mode); on web the URL
+  /// becomes the favicon. iOS and Android cannot show a downloaded launcher
+  /// icon: there IconShift switches to [RemoteIcon.variant] when it is part
+  /// of this build, and otherwise returns an unsupported outcome.
+  ///
+  /// The selection is saved and re-applied on the next launch (downloading
+  /// again where needed).
+  @useResult
+  static Future<IconShiftResult> setRemoteIcon(RemoteIcon icon) =>
+      _require.setRemoteIcon(icon);
+
+  /// Downloads the [RemoteIcon] JSON at [url] (https only). Throws
+  /// [InvalidArgumentException] when it cannot be fetched or parsed.
+  ///
+  /// ```dart
+  /// final icon = await IconShift.fetchRemoteIcon(
+  ///   Uri.parse('https://example.com/app-icon.json'),
+  /// );
+  /// final result = await IconShift.setRemoteIcon(icon);
+  /// ```
+  static Future<RemoteIcon> fetchRemoteIcon(Uri url) =>
+      _require.fetchRemoteIcon(url);
+
+  /// Re-applies the current icon for the system appearance. Called
+  /// automatically when it changes unless `followSystemAppearance: false`.
+  static Future<IconShiftResult?> refreshAppearance() =>
+      _require.refreshAppearance();
 
   /// Restores the icon and name the app ships with and clears the saved
   /// selection.
@@ -154,6 +213,17 @@ abstract final class IconShift {
   /// also reset the visible identity.
   static Future<void> clearSavedSelection() => _require.clearSavedSelection();
 
+  static IconAppearanceMode _systemAppearance() {
+    try {
+      return WidgetsBinding.instance.platformDispatcher.platformBrightness ==
+              Brightness.dark
+          ? IconAppearanceMode.dark
+          : IconAppearanceMode.light;
+    } on Object {
+      return IconAppearanceMode.light; // Binding not initialized.
+    }
+  }
+
   static String? _deviceLocale() {
     try {
       return WidgetsBinding.instance.platformDispatcher.locale.toString();
@@ -165,4 +235,38 @@ abstract final class IconShift {
   /// Replaces the engine, for tests of code that uses [IconShift].
   @visibleForTesting
   static set debugEngine(IconShiftEngine? engine) => _engine = engine;
+}
+
+/// Calls [IconShift.refreshAppearance] when the system brightness changes.
+class _AppearanceObserver with WidgetsBindingObserver {
+  static final instance = _AppearanceObserver();
+
+  bool _registered = false;
+
+  set enabled(bool value) {
+    if (value == _registered) return;
+    try {
+      if (value) {
+        WidgetsBinding.instance.addObserver(this);
+      } else {
+        WidgetsBinding.instance.removeObserver(this);
+      }
+      _registered = value;
+    } on Object {
+      // Binding not initialized (pure Dart tests): nothing to observe.
+    }
+  }
+
+  @override
+  void didChangePlatformBrightness() {
+    final engine = IconShift._engine;
+    if (engine == null || !engine.isInitialized) return;
+    engine.refreshAppearance().then((result) {
+      if (result != null && !result.isComplete) {
+        debugPrint(
+          'IconShift: applying the icon for the new appearance: $result',
+        );
+      }
+    }, onError: (Object e) => debugPrint('IconShift: $e'));
+  }
 }

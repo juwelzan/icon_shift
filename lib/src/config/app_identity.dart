@@ -38,6 +38,62 @@ class AppIcon {
   String toString() => 'AppIcon.asset($assetKey)';
 }
 
+/// Artwork for the system icon appearances next to the regular (light)
+/// icon: iOS/iPadOS 18+ dark and tinted, iOS 26 / macOS 26 Liquid Glass
+/// clear.
+///
+/// * iOS: icon_shift_cli writes [dark] and [tinted] into each app icon set;
+///   the OS then picks the right one for the home-screen mode by itself.
+///   Asset catalogs have no slot for [clear]: iOS 26 derives the clear look
+///   from the regular artwork, so [clear] is only used for previews.
+/// * macOS, Windows, Linux, web: IconShift applies [dark] instead of the
+///   regular icon while the system is in dark mode (see
+///   `IconShift.initialize(followSystemAppearance:)`).
+/// * Android: has no dark launcher icon; use `monochrome` in icon_shift.yaml
+///   for themed icons (the counterpart of [tinted]).
+@immutable
+class IconAppearances {
+  const IconAppearances({this.dark, this.tinted, this.clear});
+
+  final AppIcon? dark;
+
+  /// Grayscale artwork the OS tints with the user's color.
+  final AppIcon? tinted;
+
+  /// Artwork for the translucent Liquid Glass look.
+  final AppIcon? clear;
+
+  static const IconAppearances none = IconAppearances();
+
+  bool get isEmpty => dark == null && tinted == null && clear == null;
+
+  /// The artwork for [mode], or `null` when none is configured.
+  AppIcon? operator [](IconAppearanceMode mode) => switch (mode) {
+    IconAppearanceMode.light => null,
+    IconAppearanceMode.dark => dark,
+    IconAppearanceMode.tinted => tinted,
+    IconAppearanceMode.clear => clear,
+  };
+
+  @override
+  bool operator ==(Object other) =>
+      other is IconAppearances &&
+      other.dark == dark &&
+      other.tinted == tinted &&
+      other.clear == clear;
+
+  @override
+  int get hashCode => Object.hash(dark, tinted, clear);
+
+  @override
+  String toString() =>
+      'IconAppearances(dark: $dark, tinted: $tinted, clear: $clear)';
+}
+
+/// The home-screen icon modes of iOS 26 / macOS 26 (Liquid Glass).
+/// `light` is the regular icon ("Default" in the system settings).
+enum IconAppearanceMode { light, dark, clear, tinted }
+
 /// Which system appearance a variant is designed for. Metadata only: no OS
 /// switches launcher icons automatically when the Flutter theme changes;
 /// see [IconShiftThemeSync] for an explicit, opt-in sync.
@@ -51,25 +107,36 @@ class IdentityOverride {
     this.name,
     this.icon,
     this.localizedNames = const {},
+    this.appearances = IconAppearances.none,
   });
 
   final String? name;
   final AppIcon? icon;
 
+  /// Dark/tinted/clear artwork for this platform. See
+  /// [AppIdentity.appearances] for how it is inherited.
+  final IconAppearances appearances;
+
   /// Names by locale (`de`, `pt_BR`); see [AppIdentity.localizedNames].
   final Map<String, String> localizedNames;
 
-  bool get isEmpty => name == null && icon == null && localizedNames.isEmpty;
+  bool get isEmpty =>
+      name == null &&
+      icon == null &&
+      localizedNames.isEmpty &&
+      appearances.isEmpty;
 
   @override
   bool operator ==(Object other) =>
       other is IdentityOverride &&
       other.name == name &&
       other.icon == icon &&
-      mapEquals(other.localizedNames, localizedNames);
+      mapEquals(other.localizedNames, localizedNames) &&
+      other.appearances == appearances;
 
   @override
-  int get hashCode => Object.hash(name, icon, _hashMap(localizedNames));
+  int get hashCode =>
+      Object.hash(name, icon, _hashMap(localizedNames), appearances);
 
   @override
   String toString() => 'IdentityOverride(name: $name, icon: $icon)';
@@ -93,10 +160,17 @@ class AppIdentity {
     this.appearance,
     this.themeColor,
     this.platforms = const {},
+    this.appearances = IconAppearances.none,
   });
 
   final String? name;
   final AppIcon? icon;
+
+  /// Dark, tinted and clear versions of [icon]. They belong to the icon
+  /// they are defined next to: a variant with its own icon never inherits
+  /// the default identity's dark artwork, and a platform override that
+  /// replaces the icon must bring its own appearances.
+  final IconAppearances appearances;
 
   /// Names by locale: `{'de': 'Meine App', 'pt_BR': 'Meu App'}`. Lookup tries
   /// the full locale, then the language. Used where IconShift applies a
@@ -121,7 +195,8 @@ class AppIdentity {
       mapEquals(other.localizedNames, localizedNames) &&
       other.appearance == appearance &&
       other.themeColor == themeColor &&
-      mapEquals(other.platforms, platforms);
+      mapEquals(other.platforms, platforms) &&
+      other.appearances == appearances;
 
   @override
   int get hashCode => Object.hash(
@@ -131,6 +206,7 @@ class AppIdentity {
     appearance,
     themeColor,
     _hashMap(platforms),
+    appearances,
   );
 
   @override

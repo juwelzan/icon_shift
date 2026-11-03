@@ -13,10 +13,20 @@ const String defaultIconKey = 'default';
 /// Request to change the icon.
 @immutable
 class NativeIconRequest {
-  const NativeIconRequest({required this.key, this.assetKey, this.bytes});
+  const NativeIconRequest({
+    required this.key,
+    this.assetKey,
+    this.bytes,
+    this.url,
+  });
 
   /// Variant id of the icon, or [defaultIconKey] to restore the shipped icon.
+  /// Dark artwork of a variant uses `<id>@dark`, remote icons
+  /// `remote:<key>`.
   final String key;
+
+  /// Remote image (web uses it directly as favicon URL).
+  final Uri? url;
 
   /// Flutter asset key of the icon image (web uses it as favicon URL).
   final String? assetKey;

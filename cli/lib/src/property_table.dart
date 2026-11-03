@@ -75,12 +75,13 @@ const propertyTable = <String, Map<String, Map<String, Object>>>{
   },
   'windowTitle': {
     'android': {
-      'runtime': 'no',
+      'runtime': 'session',
       'buildTime': false,
       'reinstall': false,
       'resign': false,
       'dataKept': true,
-      'note': 'Recents title comes from MaterialApp.title.',
+      'note':
+          'Recent-apps (task) label: setDisplayName sets it; bind MaterialApp.title to IconShift.displayNameListenable.',
     },
     'ios': {
       'runtime': 'no',

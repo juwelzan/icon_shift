@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
@@ -11,18 +13,33 @@ import 'models/diagnostics.dart';
 import 'models/identity_properties.dart';
 import 'models/identity_variant.dart';
 import 'models/preview.dart';
+import 'models/remote_icon.dart';
 import 'models/result.dart';
 import 'models/state.dart';
 import 'models/validation.dart';
+import 'platform/http_fetch.dart';
 import 'platform/icon_shift_platform_interface.dart';
 import 'validation/config_validator.dart';
+
+/// Downloads [url]; used for remote icons. Throws on any failure.
+typedef RemoteFetcher =
+    Future<Uint8List> Function(Uri url, {required int maxBytes});
 
 /// Selection keys persisted through [IconShiftPlatformInterface.saveSelection].
 abstract final class _Keys {
   static const identity = 'identity';
   static const icon = 'icon';
   static const name = 'name';
+
+  /// JSON of the applied [RemoteIcon].
+  static const remote = 'remote';
 }
+
+/// Suffix of the native key while dark artwork is shown.
+const _darkSuffix = '@dark';
+
+/// Prefix of the native key of a remote icon.
+const _remotePrefix = 'remote:';
 
 /// Implements IconShift on top of an [IconShiftPlatformInterface].
 ///
@@ -34,7 +51,22 @@ class IconShiftEngine {
     required this.targetPlatform,
     AssetBundle? assetBundle,
     this.locale,
-  }) : _assets = assetBundle ?? rootBundle;
+    IconAppearanceMode Function()? systemAppearance,
+    RemoteFetcher? fetch,
+    ValueNotifier<String?>? displayNameNotifier,
+  }) : displayName = displayNameNotifier ?? ValueNotifier(null),
+       _assets = assetBundle ?? rootBundle,
+       _systemAppearance = systemAppearance,
+       _fetch = fetch ?? httpGetBytes;
+
+  /// The name the app should show for itself right now: the saved custom
+  /// name, else the name of the selected variant. Bind `MaterialApp.title`
+  /// to it — on Android and web the framework writes that title into the
+  /// recent-apps label / document title on every rebuild.
+  final ValueNotifier<String?> displayName;
+
+  final IconAppearanceMode Function()? _systemAppearance;
+  final RemoteFetcher _fetch;
 
   /// Locale for [AppIdentity.localizedNames] (`de`, `pt_BR`), or `null` for
   /// the unlocalized names.
@@ -81,6 +113,7 @@ class IconShiftEngine {
     await _recoverSelection();
 
     if (restoreSelection) _restoreResult = await _serialize(_restore);
+    _publishDisplayName();
 
     if (kDebugMode) {
       final full = await validateConfiguration();
@@ -111,6 +144,7 @@ class IconShiftEngine {
       await _commit(icon.outcome, {
         _Keys.identity: null,
         _Keys.icon: _storedIconKey(variantId),
+        _Keys.remote: null,
       });
       return _result(
         IconShiftOperation.setIcon,
@@ -157,6 +191,7 @@ class IconShiftEngine {
         await _commit(icon, {
           _Keys.identity: null,
           _Keys.icon: _storedIconKey(iconVariant),
+          _Keys.remote: null,
           if (_capabilities.iconAndNameLinked) _Keys.name: null,
         });
       }
@@ -173,6 +208,91 @@ class IconShiftEngine {
         await _commit(name, {_Keys.identity: null, _Keys.name: displayName});
       }
       return _result(IconShiftOperation.setCustomIdentity, icon, name);
+    });
+  }
+
+  /// Applies an icon published by a server; see [RemoteIcon] for what each
+  /// platform does with it.
+  Future<IconShiftResult> setRemoteIcon(RemoteIcon remote) {
+    _requireInitialized();
+    if (remote.name case final name?) _requireValidName(name);
+    return _serialize(() async {
+      if (!_capabilities.icon.acceptsArbitraryValues) {
+        final variant = remote.variant == null
+            ? null
+            : config.migrateVariantId(remote.variant!);
+        if (variant != null) {
+          return _setIdentity(variant, IconShiftOperation.setRemoteIcon);
+        }
+        return _result(
+          IconShiftOperation.setRemoteIcon,
+          OperationOutcome.unsupported(
+            remote.variant == null
+                ? '${_platformName()} only shows launcher icons compiled into '
+                      'the app; a downloaded image cannot be applied. Add the '
+                      'icon at build time (remote: in icon_shift.yaml) and '
+                      'send its variant id as "variant".'
+                : 'Variant "${remote.variant}" is not part of this build, and '
+                      '${_platformName()} cannot apply a downloaded image.',
+            code: IconShiftErrorCode.buildRequired,
+          ),
+          const OperationOutcome.notRequested(),
+        );
+      }
+
+      final icon = await _applyRemoteIcon(remote);
+      await _commit(icon, {
+        _Keys.identity: null,
+        _Keys.icon: null,
+        _Keys.remote: jsonEncode(remote.toJson()),
+      });
+      var name = const OperationOutcome.notRequested();
+      if (remote.name case final remoteName?) {
+        if (icon.status == OperationStatus.failed) {
+          name = _skippedAfterIconFailure;
+        } else {
+          name = await _applyName(remoteName);
+          await _commit(name, {_Keys.name: remoteName});
+        }
+      }
+      return _result(IconShiftOperation.setRemoteIcon, icon, name);
+    });
+  }
+
+  /// Downloads and parses the [RemoteIcon] JSON at [url].
+  Future<RemoteIcon> fetchRemoteIcon(Uri url) async {
+    checkRemoteIconUrl(url);
+    final Uint8List bytes;
+    try {
+      bytes = await _fetch(url, maxBytes: 256 * 1024);
+    } on Object catch (e) {
+      throw InvalidArgumentException('Could not download $url: $e');
+    }
+    return RemoteIcon.decode(utf8.decode(bytes), baseUri: url);
+  }
+
+  /// Re-applies the current icon for the system appearance, so that its
+  /// dark artwork is shown in dark mode. Only platforms that apply images at
+  /// runtime are affected; iOS switches icon appearances by itself.
+  Future<IconShiftResult?> refreshAppearance() {
+    _requireInitialized();
+    if (!_capabilities.icon.isSupported ||
+        !_capabilities.icon.acceptsArbitraryValues) {
+      return Future.value();
+    }
+    return _serialize(() async {
+      final OperationOutcome icon;
+      if (_savedRemote() case final remote?) {
+        icon = await _applyRemoteIcon(remote);
+      } else {
+        icon = (await _applyIcon(_selection[_Keys.icon] ?? _defaultId)).outcome;
+      }
+      if (icon.status == OperationStatus.unchanged) return null;
+      return _result(
+        IconShiftOperation.setIcon,
+        icon,
+        const OperationOutcome.notRequested(),
+      );
     });
   }
 
@@ -210,9 +330,9 @@ class IconShiftEngine {
       requestedIdentity: _selection[_Keys.identity],
       requestedIconVariant: _selection[_Keys.icon],
       requestedDisplayName: _selection[_Keys.name],
-      nativeIconVariant: native.iconKey,
+      nativeIconVariant: _logicalKey(native.iconKey),
       nativeDisplayName: native.displayName,
-      pendingIconVariant: native.pendingIconKey,
+      pendingIconVariant: _logicalKey(native.pendingIconKey),
     );
   }
 
@@ -360,7 +480,12 @@ class IconShiftEngine {
       name = await _applyName(resolved.usesDefaultName ? null : resolved.name);
     }
 
-    await _commit(icon.outcome, {_Keys.icon: _storedIconKey(variantId)});
+    await _commit(icon.outcome, {
+      _Keys.icon: _storedIconKey(variantId),
+      _Keys.remote: null,
+      // The alias label replaces any custom name (Android task label).
+      if (_capabilities.iconAndNameLinked) _Keys.name: null,
+    });
     if (!_capabilities.iconAndNameLinked) {
       await _commit(name, {
         _Keys.name: resolved.usesDefaultName ? null : resolved.name,
@@ -388,10 +513,13 @@ class IconShiftEngine {
       );
     }
     final resolved = _resolve(variantId);
-    final key = _nativeIconKey(variantId);
+    final dark = _showsDarkArtwork(resolved.appearances.dark);
+    final key = dark
+        ? '${_nativeIconKey(variantId)}$_darkSuffix'
+        : _nativeIconKey(variantId);
 
     Uint8List? bytes;
-    final icon = resolved.icon;
+    final icon = dark ? resolved.appearances.dark : resolved.icon;
     final needsBytes =
         key != defaultIconKey &&
         _capabilities.icon.acceptsArbitraryValues &&
@@ -463,6 +591,69 @@ class IconShiftEngine {
       return _outcomeFromError(e);
     }
   }
+
+  /// Downloads (except on web) and applies [remote], in its dark artwork
+  /// when the system is in dark mode.
+  Future<OperationOutcome> _applyRemoteIcon(RemoteIcon remote) async {
+    if (!_capabilities.icon.isSupported) {
+      return OperationOutcome.unsupported(
+        _capabilities.icon.limitation ??
+            'Changing the icon is not supported on ${_platformName()}.',
+      );
+    }
+    final dark = _showsDarkArtwork(remote.dark);
+    final url = dark ? remote.dark! : remote.url;
+    final key = '$_remotePrefix${remote.key}${dark ? _darkSuffix : ''}';
+    Uint8List? bytes;
+    if (targetPlatform != IconShiftPlatform.web) {
+      try {
+        bytes = await _fetch(url, maxBytes: maxRemoteIconBytes);
+      } on Object catch (e) {
+        return OperationOutcome.failed(
+          IconShiftErrorCode.downloadFailed,
+          'Could not download $url: $e',
+        );
+      }
+      if (!looksLikeImage(bytes)) {
+        return OperationOutcome.failed(
+          IconShiftErrorCode.downloadFailed,
+          '$url did not return a PNG, JPEG, GIF, BMP, WebP or ICO image.',
+        );
+      }
+    }
+    try {
+      return _outcomeFromNative(
+        await platform.setIcon(
+          NativeIconRequest(key: key, bytes: bytes, url: url),
+        ),
+      );
+    } on Object catch (e) {
+      return _outcomeFromError(e);
+    }
+  }
+
+  /// Whether to show [darkArtwork] instead of the regular icon: only where
+  /// IconShift applies images itself (iOS picks appearances on its own).
+  bool _showsDarkArtwork(Object? darkArtwork) =>
+      darkArtwork != null &&
+      _capabilities.icon.acceptsArbitraryValues &&
+      _systemAppearance?.call() == IconAppearanceMode.dark;
+
+  RemoteIcon? _savedRemote() {
+    final json = _selection[_Keys.remote];
+    if (json == null) return null;
+    try {
+      return RemoteIcon.decode(json);
+    } on Object {
+      return null;
+    }
+  }
+
+  /// [key] as the variant it shows: without the dark suffix.
+  static String? _logicalKey(String? key) =>
+      key != null && key.endsWith(_darkSuffix)
+      ? key.substring(0, key.length - _darkSuffix.length)
+      : key;
 
   OperationOutcome _linkedNameOutcome(
     OperationOutcome icon,
@@ -539,10 +730,16 @@ class IconShiftEngine {
     var name = const OperationOutcome.notRequested();
 
     final iconKey = _selection[_Keys.icon];
-    if (iconKey != null &&
-        _capabilities.icon.isSupported &&
-        !_capabilities.icon.persistsNatively) {
-      icon = (await _applyIcon(iconKey)).outcome;
+    final remote = _savedRemote();
+    final reapplies =
+        _capabilities.icon.isSupported && !_capabilities.icon.persistsNatively;
+    if (remote != null && reapplies) {
+      icon = await _applyRemoteIcon(remote);
+    } else if (reapplies &&
+        (iconKey != null ||
+            _showsDarkArtwork(_resolve(_defaultId).appearances.dark))) {
+      // The default icon only needs applying for its dark artwork.
+      icon = (await _applyIcon(iconKey ?? _defaultId)).outcome;
     }
     final savedName = _selection[_Keys.name];
     if (savedName != null &&
@@ -586,6 +783,13 @@ class IconShiftEngine {
             recovered[key] = key == _Keys.icon
                 ? (_storedIconKey(migrated) ?? '')
                 : migrated;
+          }
+        case _Keys.remote:
+          try {
+            RemoteIcon.decode(value);
+            recovered[key] = value;
+          } on Object {
+            notes.add('invalid saved remote icon dropped');
           }
         case _Keys.name:
           if (displayNameProblem(value) == null) {
@@ -647,6 +851,9 @@ class IconShiftEngine {
       IconShiftErrorCode.appNotActive =>
         'Call it while the app is in the foreground, e.g. from a button '
             'handler.',
+      IconShiftErrorCode.downloadFailed =>
+        'Check the URL, the network connection and (web) the server\'s CORS '
+            'headers.',
       IconShiftErrorCode.nativeOperationFailed =>
         'See IconShift.getDiagnostics() for platform details.',
       _ => null,
@@ -792,8 +999,24 @@ class IconShiftEngine {
     if (!mapEquals(next, _selection)) await _saveSelection(next);
   }
 
+  void _publishDisplayName() {
+    if (_config == null) return;
+    final custom = _selection[_Keys.name];
+    if (custom != null) {
+      displayName.value = custom;
+      return;
+    }
+    final id =
+        _selection[_Keys.identity] ??
+        (_capabilities.iconAndNameLinked ? _selection[_Keys.icon] : null);
+    displayName.value = _resolve(
+      id != null && config.hasVariant(id) ? id : _defaultId,
+    ).name;
+  }
+
   Future<void> _saveSelection(Map<String, String> selection) async {
     _selection = selection;
+    _publishDisplayName();
     try {
       await platform.saveSelection(selection);
     } on Object catch (e) {

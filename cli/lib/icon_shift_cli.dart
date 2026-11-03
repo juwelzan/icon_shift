@@ -34,6 +34,8 @@ export 'src/identity.dart'
         versionProblem;
 export 'src/plan.dart' show Level, Message, Plan, lineDiff;
 export 'src/property_table.dart' show propertyTable, platforms;
+export 'src/remote.dart'
+    show RemoteException, RemoteFetch, RemoteResolution, resolveRemote;
 
 /// Thrown when no configuration file exists.
 class ConfigNotFoundException extends ConfigException {
@@ -138,6 +140,7 @@ Plan plan(String projectDir, GeneratorConfig config, {Set<String>? only}) {
   final rasterNeeded = <String>{};
   for (final spec in [config.defaultIdentity, ...config.variants.values]) {
     if (spec.icon case final icon?) rasterNeeded.add(icon);
+    rasterNeeded.addAll(spec.appearances.images);
     spec.platforms.forEach((platform, o) {
       if (o.icon case final icon?) {
         (platform == 'linux' || platform == 'web' ? svgAllowed : rasterNeeded)
@@ -148,6 +151,7 @@ Plan plan(String projectDir, GeneratorConfig config, {Set<String>? only}) {
         ?o.adaptiveForeground,
         ?o.dark,
         ?o.tinted,
+        ?o.clear,
       ]);
     });
   }
@@ -214,11 +218,16 @@ void _checkAssetsDeclared(
         in (flutter is YamlMap ? flutter['assets'] : null) ?? const [])
       if (entry is String) entry else if (entry is YamlMap) '${entry['path']}',
   ];
-  // Only images the runtime uses (name/icon), not native-only layers.
+  // Only images the runtime uses (icons and their appearances), not
+  // native-only layers.
   final runtimeIcons = {
     for (final spec in [config.defaultIdentity, ...config.variants.values]) ...[
       ?spec.icon,
-      for (final o in spec.platforms.values) ?o.icon,
+      ...spec.appearances.images,
+      for (final o in spec.platforms.values) ...[
+        ?o.icon,
+        ...o.appearances.images,
+      ],
     ],
   };
   for (final icon in runtimeIcons) {
@@ -353,8 +362,9 @@ String preview(GeneratorConfig config, {String? variant}) {
           'monochrome ${r.override!.monochrome}',
         if (r.override?.adaptiveForeground != null)
           'foreground ${r.override!.adaptiveForeground}',
-        if (r.override?.dark != null) 'dark ${r.override!.dark}',
-        if (r.override?.tinted != null) 'tinted ${r.override!.tinted}',
+        if (r.appearances.dark case final dark?) 'dark $dark',
+        if (r.appearances.tinted case final tinted?) 'tinted $tinted',
+        if (r.appearances.clear case final clear?) 'clear $clear',
       ];
       b.writeln(
         '  ${''.padRight(8)} icon: ${r.icon ?? '(none)'}${r.usesDefaultIcon && id != defaultVariantId ? ' (default)' : ''}'

@@ -54,6 +54,20 @@ abstract class _Command extends Command<int> {
   GeneratorConfig loadProjectConfig() =>
       loadConfig(projectDir, configPath: globalResults!.option('config'));
 
+  /// [loadProjectConfig] with `remote:` variants merged and every https
+  /// image downloaded into remote.assets_dir.
+  Future<GeneratorConfig> loadResolvedConfig({bool refresh = false}) async {
+    final resolution = await resolveRemote(
+      projectDir,
+      loadProjectConfig(),
+      refresh: refresh,
+    );
+    for (final m in resolution.messages) {
+      stdout.writeln('INFO: $m');
+    }
+    return resolution.config;
+  }
+
   /// Prints messages; returns 1 if any is an error.
   int report(Plan plan, {bool showInfo = true}) {
     for (final m in plan.messages) {
@@ -131,8 +145,8 @@ class _ValidateCommand extends _Command {
       'Validate the configuration, images and build identity without writing anything.';
 
   @override
-  int run() {
-    final config = loadProjectConfig();
+  Future<int> run() async {
+    final config = await loadResolvedConfig();
     final resources = plan(projectDir, config);
     final identity = config.buildIdentity(argResults!.option('profile'));
     if (identity != null) planBuildIdentity(projectDir, identity, resources);
@@ -162,6 +176,13 @@ class _GenerateCommand extends _Command {
         'diff',
         defaultsTo: true,
         help: 'Show line diffs of text files.',
+      )
+      ..addFlag(
+        'refresh-remote',
+        negatable: false,
+        help:
+            'Download https icons and the remote manifest again instead of '
+            'reusing remote.assets_dir.',
       );
   }
   @override
@@ -171,11 +192,11 @@ class _GenerateCommand extends _Command {
       'Generate native icon/label resources and the Dart config from icon_shift.yaml.';
 
   @override
-  int run() {
+  Future<int> run() async {
     final only = argResults!.multiOption('platform');
     final result = plan(
       projectDir,
-      loadProjectConfig(),
+      await loadResolvedConfig(refresh: argResults!.flag('refresh-remote')),
       only: only.isEmpty ? null : only.toSet(),
     );
     return applyOrPreview(
@@ -200,8 +221,8 @@ class _PreviewCommand extends _Command {
       'Show how every variant resolves per platform and what a build identity would change.';
 
   @override
-  int run() {
-    final config = loadProjectConfig();
+  Future<int> run() async {
+    final config = await loadResolvedConfig();
     stdout.writeln('Runtime identities\n');
     stdout.write(preview(config, variant: argResults!.option('variant')));
     final identity = config.buildIdentity(argResults!.option('profile'));
@@ -320,7 +341,8 @@ class _AssetsCommand extends _Command {
       'Check the source images referenced by the configuration.';
 
   @override
-  int run() => report(checkAssets(projectDir, loadProjectConfig()));
+  Future<int> run() async =>
+      report(checkAssets(projectDir, await loadResolvedConfig()));
 }
 
 class _RollbackCommand extends _Command {

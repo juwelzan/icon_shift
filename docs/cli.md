@@ -15,7 +15,7 @@ Global options: `--project <dir>` (default `.`), `--config <file>` (default
 | --- | --- | --- |
 | `doctor` | Flutter project? plugin dependency? platforms present, config valid, Android markers and tooling filter, iOS build setting, resources up to date, `.gitignore` | no |
 | `validate [--profile p]` | Config, images, build identity rules | no |
-| `generate [--platform …] [-n] [--no-diff]` | Native icon/label resources and the Dart config | yes (backed up) |
+| `generate [--platform …] [-n] [--no-diff] [--refresh-remote]` | Native icon/label resources and the Dart config; downloads `https://` images and `remote.manifest` variants first | yes (backed up) |
 | `preview [--variant v] [--profile p]` | How every variant resolves per platform; dry-run diff of the build identity | no |
 | `capabilities [--platform p]` | The identity property table | no |
 | `identity --show` | Identity currently in the native project files | no |

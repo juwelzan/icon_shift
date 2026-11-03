@@ -101,6 +101,20 @@ class IconShiftConfig {
         nameAt(variantOverride?.name, variantOverride?.localizedNames) ??
         nameAt(variant?.name, variant?.localizedNames);
     final ownIcon = variantOverride?.icon ?? variant?.icon;
+
+    // Appearances travel with the icon they were drawn for.
+    IconAppearances appearancesOf(AppIdentity identity, IdentityOverride? o) {
+      final base = o?.icon != null
+          ? IconAppearances.none
+          : identity.appearances;
+      final own = o?.appearances ?? IconAppearances.none;
+      return IconAppearances(
+        dark: own.dark ?? base.dark,
+        tinted: own.tinted ?? base.tinted,
+        clear: own.clear ?? base.clear,
+      );
+    }
+
     return ResolvedIdentity(
       variantId: variantId,
       platform: platform,
@@ -109,6 +123,9 @@ class IconShiftConfig {
           nameAt(defaultOverride?.name, defaultOverride?.localizedNames) ??
           nameAt(defaultIdentity.name, defaultIdentity.localizedNames),
       icon: ownIcon ?? defaultOverride?.icon ?? defaultIdentity.icon,
+      appearances: ownIcon != null
+          ? appearancesOf(variant!, variantOverride)
+          : appearancesOf(defaultIdentity, defaultOverride),
       usesDefaultName: ownName == null,
       usesDefaultIcon: ownIcon == null,
       appearance: variant?.appearance ?? defaultIdentity.appearance,
@@ -153,6 +170,7 @@ class ResolvedIdentity {
     required this.icon,
     required this.usesDefaultName,
     required this.usesDefaultIcon,
+    this.appearances = IconAppearances.none,
     this.appearance,
     this.themeColor,
   });
@@ -165,6 +183,12 @@ class ResolvedIdentity {
 
   /// Effective icon, or `null` if none is configured anywhere.
   final AppIcon? icon;
+
+  /// Dark/tinted/clear versions of [icon].
+  final IconAppearances appearances;
+
+  /// [icon] in [mode], falling back to the regular icon.
+  AppIcon? iconFor(IconAppearanceMode mode) => appearances[mode] ?? icon;
 
   /// `true` when the variant does not define its own name, so switching to
   /// it restores the app's shipped name.
@@ -191,6 +215,7 @@ class ResolvedIdentity {
       other.icon == icon &&
       other.usesDefaultName == usesDefaultName &&
       other.usesDefaultIcon == usesDefaultIcon &&
+      other.appearances == appearances &&
       other.appearance == appearance &&
       other.themeColor == themeColor;
 
@@ -202,6 +227,7 @@ class ResolvedIdentity {
     icon,
     usesDefaultName,
     usesDefaultIcon,
+    appearances,
     appearance,
     themeColor,
   );

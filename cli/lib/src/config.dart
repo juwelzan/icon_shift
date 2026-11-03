@@ -32,6 +32,31 @@ String checkProjectPath(String value, String where) {
   return normalized;
 }
 
+/// `http(s)://` icon sources, downloaded by `resolveRemote` before planning.
+bool isRemoteSource(String value) =>
+    value.startsWith('https://') || value.startsWith('http://');
+
+/// Dark / tinted / clear artwork of an icon (iOS 18+, iOS 26 / macOS 26).
+class AppearanceSpec {
+  const AppearanceSpec({this.dark, this.tinted, this.clear});
+
+  static const none = AppearanceSpec();
+
+  final String? dark;
+  final String? tinted;
+  final String? clear;
+
+  bool get isEmpty => dark == null && tinted == null && clear == null;
+
+  Iterable<String> get images => [?dark, ?tinted, ?clear];
+
+  AppearanceSpec map(String Function(String) f) => AppearanceSpec(
+    dark: dark == null ? null : f(dark!),
+    tinted: tinted == null ? null : f(tinted!),
+    clear: clear == null ? null : f(clear!),
+  );
+}
+
 /// Per-platform override of an identity.
 class OverrideSpec {
   OverrideSpec({
@@ -42,6 +67,7 @@ class OverrideSpec {
     this.adaptiveForeground,
     this.dark,
     this.tinted,
+    this.clear,
   });
 
   final String? name;
@@ -54,9 +80,13 @@ class OverrideSpec {
   /// Android: adaptive foreground replacing the inset of [icon].
   final String? adaptiveForeground;
 
-  /// iOS: dark / tinted appearance artwork (iOS 18+).
+  /// iOS / macOS: dark / tinted / clear appearance artwork.
   final String? dark;
   final String? tinted;
+  final String? clear;
+
+  AppearanceSpec get appearances =>
+      AppearanceSpec(dark: dark, tinted: tinted, clear: clear);
 
   Iterable<String> get images => [
     ?icon,
@@ -64,7 +94,22 @@ class OverrideSpec {
     ?adaptiveForeground,
     ?dark,
     ?tinted,
+    ?clear,
   ];
+
+  OverrideSpec map(String Function(String) f) {
+    String? m(String? v) => v == null ? null : f(v);
+    return OverrideSpec(
+      name: name,
+      icon: m(icon),
+      names: names,
+      monochrome: m(monochrome),
+      adaptiveForeground: m(adaptiveForeground),
+      dark: m(dark),
+      tinted: m(tinted),
+      clear: m(clear),
+    );
+  }
 }
 
 /// Name and icon with per-platform overrides; mirrors `AppIdentity`.
@@ -76,10 +121,15 @@ class IdentitySpec {
     this.appearance,
     this.themeColor,
     this.platforms = const {},
+    this.appearances = AppearanceSpec.none,
   });
 
   final String? name;
   final String? icon;
+
+  /// Dark / tinted / clear versions of [icon], for every platform that
+  /// supports them. Platform overrides that replace the icon bring their own.
+  final AppearanceSpec appearances;
 
   /// Localized names keyed by locale (`de`, `pt_BR`).
   final Map<String, String> names;
@@ -90,6 +140,16 @@ class IdentitySpec {
   /// `#RRGGBB`, used for the web theme color.
   final String? themeColor;
   final Map<String, OverrideSpec> platforms;
+
+  IdentitySpec map(String Function(String) f) => IdentitySpec(
+    name: name,
+    icon: icon == null ? null : f(icon!),
+    names: names,
+    appearance: appearance,
+    themeColor: themeColor,
+    platforms: platforms.map((k, v) => MapEntry(k, v.map(f))),
+    appearances: appearances.map(f),
+  );
 }
 
 /// The effective name and icon of a variant on one platform.
@@ -101,6 +161,7 @@ class Resolved {
     this.usesDefaultIcon, {
     this.names = const {},
     this.override,
+    this.appearances = AppearanceSpec.none,
   });
   final String id;
   final String? name;
@@ -112,6 +173,23 @@ class Resolved {
 
   /// The variant's own override for the platform, for extra icon layers.
   final OverrideSpec? override;
+
+  /// Dark / tinted / clear artwork of [icon] on this platform.
+  final AppearanceSpec appearances;
+}
+
+/// `remote:` — a server manifest of variants and where downloads go.
+class RemoteOptions {
+  RemoteOptions({this.manifest, this.assetsDir = defaultRemoteAssetsDir});
+
+  static const defaultRemoteAssetsDir = 'assets/icon_shift/remote';
+
+  /// https URL of a JSON document `{"variants": {<id>: <variant>}}` whose
+  /// variants use the same keys as icon_shift.yaml.
+  final String? manifest;
+
+  /// Where downloaded images are stored; add it to flutter > assets.
+  final String assetsDir;
 }
 
 class AndroidOptions {
@@ -193,7 +271,34 @@ class GeneratorConfig {
     this.dartOutput,
     this.application,
     this.buildProfiles = const {},
-  }) : outputs = outputs ?? DesktopWebOptions();
+    RemoteOptions? remote,
+  }) : outputs = outputs ?? DesktopWebOptions(),
+       remote = remote ?? RemoteOptions();
+
+  /// Server-provided icons (`remote:`).
+  final RemoteOptions remote;
+
+  /// A copy with [variants] and every image path replaced through [f].
+  GeneratorConfig copyWith({
+    Map<String, IdentitySpec>? variants,
+    String Function(String)? mapImages,
+  }) {
+    final f = mapImages ?? (String v) => v;
+    return GeneratorConfig(
+      defaultIdentity: defaultIdentity.map(f),
+      variants: (variants ?? this.variants).map(
+        (k, v) => MapEntry(k, v.map(f)),
+      ),
+      android: android,
+      ios: ios,
+      outputs: outputs,
+      renamed: renamed,
+      dartOutput: dartOutput,
+      application: application,
+      buildProfiles: buildProfiles,
+      remote: remote,
+    );
+  }
 
   final IdentitySpec defaultIdentity;
   final Map<String, IdentitySpec> variants;
@@ -236,6 +341,18 @@ class GeneratorConfig {
     final vo = variant?.platforms[platform];
     final dO = defaultIdentity.platforms[platform];
     final ownIcon = vo?.icon ?? variant?.icon;
+
+    // Appearances travel with the icon they were drawn for (as in the
+    // plugin's IconShiftConfig.resolve).
+    AppearanceSpec appearancesOf(IdentitySpec identity, OverrideSpec? o) {
+      final base = o?.icon != null ? AppearanceSpec.none : identity.appearances;
+      return AppearanceSpec(
+        dark: o?.dark ?? base.dark,
+        tinted: o?.tinted ?? base.tinted,
+        clear: o?.clear ?? base.clear,
+      );
+    }
+
     return Resolved(
       id,
       vo?.name ?? variant?.name ?? dO?.name ?? defaultIdentity.name,
@@ -248,6 +365,9 @@ class GeneratorConfig {
         (defaultIdentity.name, defaultIdentity.names),
       ]),
       override: id == defaultVariantId ? dO : vo,
+      appearances: ownIcon != null
+          ? appearancesOf(variant!, vo)
+          : appearancesOf(defaultIdentity, dO),
     );
   }
 
@@ -279,6 +399,7 @@ class GeneratorConfig {
   Set<String> get allIcons => {
     for (final spec in [defaultIdentity, ...variants.values]) ...[
       ?spec.icon,
+      ...spec.appearances.images,
       for (final o in spec.platforms.values) ...o.images,
     ],
   };
@@ -311,6 +432,7 @@ class GeneratorConfig {
       'dart',
       'application',
       'build_profiles',
+      'remote',
     });
 
     final defaultIdentity = _identity(map['default'], 'default');
@@ -352,6 +474,12 @@ class GeneratorConfig {
     final linux = _optionalMap(map['linux'], 'linux');
     final web = _optionalMap(map['web'], 'web');
     final dart = _optionalMap(map['dart'], 'dart');
+    final remote = _optionalMap(map['remote'], 'remote');
+    _allowKeys(remote, 'remote', const {'manifest', 'assets_dir'});
+    final manifestUrl = _string(remote['manifest'], 'remote.manifest');
+    if (manifestUrl != null && !isRemoteSource(manifestUrl)) {
+      throw ConfigException('"remote.manifest" must be an https URL.');
+    }
     _allowKeys(android, 'android', const {
       'enabled',
       'res_dir',
@@ -448,7 +576,29 @@ class GeneratorConfig {
               'application',
             ),
       buildProfiles: profiles,
+      remote: RemoteOptions(
+        manifest: manifestUrl,
+        assetsDir:
+            _path(remote['assets_dir'], 'remote.assets_dir') ??
+            RemoteOptions.defaultRemoteAssetsDir,
+      ),
     );
+  }
+
+  /// Parses the `variants` of a remote manifest with the same rules as
+  /// icon_shift.yaml. Relative image URLs are resolved against [base].
+  static Map<String, IdentitySpec> parseRemoteVariants(Object? json, Uri base) {
+    final map = _map(json, 'remote manifest');
+    final node = map['variants'];
+    if (node == null) return const {};
+    final result = <String, IdentitySpec>{};
+    _map(node, 'remote manifest variants').forEach((key, value) {
+      final id = key.toString();
+      _checkVariantId(id, 'remote manifest variants');
+      final spec = _identity(value, 'remote:variants.$id', remoteBase: base);
+      result[id] = spec;
+    });
+    return result;
   }
 
   static void _checkVariantId(String id, String where) {
@@ -462,7 +612,18 @@ class GeneratorConfig {
     }
   }
 
-  static IdentitySpec _identity(Object? node, String where) {
+  static IdentitySpec _identity(Object? node, String where, {Uri? remoteBase}) {
+    String? image(Object? value, String at) {
+      if (remoteBase == null) return _iconSource(value, at);
+      final raw = _string(value, at);
+      if (raw == null) return null;
+      final resolved = remoteBase.resolve(raw).toString();
+      if (!isRemoteSource(resolved)) {
+        throw ConfigException('"$at" must be an http(s) URL in a manifest.');
+      }
+      return resolved;
+    }
+
     if (node == null) {
       if (where == 'default') {
         throw ConfigException('Missing "default:" identity.');
@@ -477,6 +638,7 @@ class GeneratorConfig {
       'appearance',
       'theme_color',
       'platforms',
+      'appearances',
     });
     final appearance = _string(map['appearance'], '$where.appearance');
     if (appearance != null && appearance != 'light' && appearance != 'dark') {
@@ -499,25 +661,45 @@ class GeneratorConfig {
           'icon',
           'names',
           if (platform == 'android') ...['monochrome', 'adaptive_foreground'],
-          if (platform == 'ios') ...['dark', 'tinted'],
+          if (platform == 'ios' || platform == 'macos') ...[
+            'dark',
+            'tinted',
+            'clear',
+          ] else if (platform != 'android')
+            'dark',
         });
         platforms[platform] = OverrideSpec(
           name: _name(o['name'], '$at.name'),
-          icon: _path(o['icon'], '$at.icon'),
+          icon: image(o['icon'], '$at.icon'),
           names: _names(o['names'], '$at.names'),
-          monochrome: _path(o['monochrome'], '$at.monochrome'),
-          adaptiveForeground: _path(
+          monochrome: image(o['monochrome'], '$at.monochrome'),
+          adaptiveForeground: image(
             o['adaptive_foreground'],
             '$at.adaptive_foreground',
           ),
-          dark: _path(o['dark'], '$at.dark'),
-          tinted: _path(o['tinted'], '$at.tinted'),
+          dark: image(o['dark'], '$at.dark'),
+          tinted: image(o['tinted'], '$at.tinted'),
+          clear: image(o['clear'], '$at.clear'),
         );
       });
     }
+    final appearancesNode = _optionalMap(
+      map['appearances'],
+      '$where.appearances',
+    );
+    _allowKeys(appearancesNode, '$where.appearances', const {
+      'dark',
+      'tinted',
+      'clear',
+    });
     return IdentitySpec(
+      appearances: AppearanceSpec(
+        dark: image(appearancesNode['dark'], '$where.appearances.dark'),
+        tinted: image(appearancesNode['tinted'], '$where.appearances.tinted'),
+        clear: image(appearancesNode['clear'], '$where.appearances.clear'),
+      ),
       name: _name(map['name'], '$where.name'),
-      icon: _path(map['icon'], '$where.icon'),
+      icon: image(map['icon'], '$where.icon'),
       names: _names(map['names'], '$where.names'),
       appearance: appearance,
       themeColor: _color(map['theme_color'], '$where.theme_color'),
@@ -582,6 +764,21 @@ String? _string(Object? node, String where) {
 String? _path(Object? node, String where) {
   final value = _string(node, where);
   return value == null ? null : checkProjectPath(value, where);
+}
+
+/// An image: a project path, or an https URL downloaded before planning.
+String? _iconSource(Object? node, String where) {
+  final value = _string(node, where);
+  if (value == null) return null;
+  if (isRemoteSource(value)) {
+    final uri = Uri.tryParse(value);
+    final local = uri?.host == 'localhost' || uri?.host == '127.0.0.1';
+    if (uri == null || uri.host.isEmpty || (!uri.isScheme('https') && !local)) {
+      throw ConfigException('"$where" must be an https URL, got "$value".');
+    }
+    return value;
+  }
+  return checkProjectPath(value, where);
 }
 
 bool? _bool(Object? node, String where) {

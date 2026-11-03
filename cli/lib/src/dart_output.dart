@@ -43,9 +43,8 @@ void planDart(GeneratorConfig config, Plan plan) {
   b.writeln(');');
   // `dart format` may re-wrap the file and add or drop trailing commas;
   // that is not a change.
-  String squash(String v) => v
-      .replaceAll(RegExp(r'\s+'), '')
-      .replaceAll(RegExp(r',(?=[)\]}])'), '');
+  String squash(String v) =>
+      v.replaceAll(RegExp(r'\s+'), '').replaceAll(RegExp(r',(?=[)\]}])'), '');
   if (existing.existsSync() &&
       squash(existing.readAsStringSync()) == squash(b.toString())) {
     return;
@@ -58,13 +57,15 @@ String _identity(IdentitySpec spec, String indent) {
     if (spec.name != null) 'name: ${_str(spec.name!)}',
     if (spec.icon != null) 'icon: AppIcon.asset(${_str(spec.icon!)})',
     if (spec.names.isNotEmpty) 'localizedNames: ${_names(spec.names)}',
+    if (!spec.appearances.isEmpty)
+      'appearances: ${_appearances(spec.appearances)}',
     if (spec.appearance != null)
       'appearance: IdentityAppearance.${spec.appearance}',
     if (spec.themeColor != null)
       'themeColor: 0xFF${spec.themeColor!.substring(1).toUpperCase()}',
     if (spec.platforms.values.any(_hasRuntimeFields))
       'platforms: {\n${spec.platforms.entries.where((e) => _hasRuntimeFields(e.value)).map((e) {
-        final o = [if (e.value.name != null) 'name: ${_str(e.value.name!)}', if (e.value.icon != null) 'icon: AppIcon.asset(${_str(e.value.icon!)})', if (e.value.names.isNotEmpty) 'localizedNames: ${_names(e.value.names)}'];
+        final o = [if (e.value.name != null) 'name: ${_str(e.value.name!)}', if (e.value.icon != null) 'icon: AppIcon.asset(${_str(e.value.icon!)})', if (e.value.names.isNotEmpty) 'localizedNames: ${_names(e.value.names)}', if (!e.value.appearances.isEmpty) 'appearances: ${_appearances(e.value.appearances)}'];
         return '$indent    IconShiftPlatform.${e.key}: IdentityOverride(${o.join(', ')}),';
       }).join('\n')}\n$indent  }',
   ];
@@ -72,9 +73,22 @@ String _identity(IdentitySpec spec, String indent) {
   return 'AppIdentity(\n${fields.map((f) => '$indent  $f,').join('\n')}\n$indent)';
 }
 
-/// Native-only layers (monochrome, dark, …) have no runtime equivalent.
+/// Native-only layers (monochrome, adaptive foreground) have no runtime
+/// equivalent; appearances do (desktop dark mode, previews).
 bool _hasRuntimeFields(OverrideSpec o) =>
-    o.name != null || o.icon != null || o.names.isNotEmpty;
+    o.name != null ||
+    o.icon != null ||
+    o.names.isNotEmpty ||
+    !o.appearances.isEmpty;
+
+String _appearances(AppearanceSpec a) {
+  final fields = [
+    if (a.dark case final v?) 'dark: AppIcon.asset(${_str(v)})',
+    if (a.tinted case final v?) 'tinted: AppIcon.asset(${_str(v)})',
+    if (a.clear case final v?) 'clear: AppIcon.asset(${_str(v)})',
+  ];
+  return 'IconAppearances(${fields.join(', ')})';
+}
 
 String _names(Map<String, String> names) =>
     '{${names.entries.map((e) => "'${e.key}': ${_str(e.value)}").join(', ')}}';

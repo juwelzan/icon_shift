@@ -20,20 +20,30 @@ The CLI never upscales, rejects non-square images, and rejects SVG wherever a
 raster is needed (it cannot rasterize SVG reliably without heavy
 dependencies — export a PNG).
 
+Any image may also be an **`https://` URL**: `generate`, `validate`,
+`preview` and `assets` download it into `remote.assets_dir` (default
+`assets/icon_shift/remote/`) first, and everything else — native resources,
+the generated Dart config — uses the downloaded file. See
+[Server-provided icons](#server-provided-icons).
+
 ## YAML reference
 
 ```yaml
 default:
   name: Notes
   icon: assets/icons/app.png
+  appearances:                                   # iOS 26 / macOS 26 modes
+    dark: assets/icons/app_dark.png              # Dark
+    tinted: assets/icons/app_tinted.png          # Tinted (grayscale)
+    clear: assets/icons/app_clear.png            # Clear (previews; see below)
   platforms:
     android:
       icon: assets/icons/app_android.png
       adaptive_foreground: assets/icons/fg.png   # 108 dp layer
       monochrome: assets/icons/mono.png          # Android 13 themed icons
     ios:
-      dark: assets/icons/app_dark.png            # iOS 18 dark appearance
-      tinted: assets/icons/app_tinted.png        # iOS 18 tinted appearance
+      dark: assets/icons/app_dark_ios.png        # iOS-only artwork wins over
+                                                 # the shared appearances
     linux:
       icon: assets/icons/app.svg                 # SVG allowed here
     web:
@@ -41,6 +51,9 @@ default:
 
 variants:
   dark:   { icon: assets/icons/dark.png, appearance: dark, theme_color: "#121212" }
+  summer:
+    icon: https://cdn.example.com/icons/summer.png       # downloaded
+    appearances: { dark: https://cdn.example.com/icons/summer_dark.png }
   blue:   { icon: assets/icons/blue.png }
   green:  { icon: assets/icons/green.png }
   winter: { name: Notes ❄, icon: assets/icons/winter.png }   # seasonal
@@ -58,7 +71,72 @@ windows: { app_icon: false }
 linux:   { icons: false, output_dir: linux/packaging }
 web:     { icons: false, maskable_background: "#FFFFFF" }
 dart:    { output: lib/icon_shift_config.g.dart }
+remote:
+  manifest: https://cdn.example.com/icons/manifest.json  # optional
+  assets_dir: assets/icon_shift/remote                  # add to flutter > assets
 ```
+
+## Appearances: Default, Dark, Clear, Tinted
+
+iOS 26 and macOS 26 (Liquid Glass) let the user pick the home-screen icon
+mode: **Default**, **Dark**, **Clear** or **Tinted**. Give each icon its
+artwork under `appearances:` (or per platform, `platforms.ios.dark` /
+`tinted` / `clear`, likewise for `macos`). Appearances belong to the icon
+they sit next to: a variant with its own icon never inherits the default's
+dark artwork, and a platform override that replaces the icon brings its own.
+
+| Platform | Default | Dark | Tinted | Clear |
+| --- | --- | --- | --- | --- |
+| iOS 18+ / 26 | icon set | written to the icon set (`luminosity: dark`); the OS switches by itself | written to the icon set (`luminosity: tinted`) | asset catalogs have no slot; iOS 26 derives it from the regular icon (custom clear layers need an Icon Composer `.icon` file) |
+| macOS | Dock icon | IconShift shows it while the system is dark | — | — |
+| Windows, Linux, web | window/taskbar icon, favicon | IconShift shows it while the system is dark | — | — |
+| Android | alias icon | — (no dark launcher icons) | use `monochrome` (themed icons, Android 13+) | — |
+
+At runtime the same artwork is available as `AppIdentity.appearances`
+(`IconAppearances(dark:, tinted:, clear:)`) for previews, and
+`IconShift.initialize(followSystemAppearance: true)` — the default — swaps
+the dark artwork in and out on the platforms that apply images themselves.
+
+## Server-provided icons
+
+Launcher icons on **iOS and Android must be compiled into the app**: neither
+OS accepts a downloaded image (iOS only switches between alternate icons in
+the bundle, Android only between activity-aliases). Icons from a server
+therefore reach those platforms through the build:
+
+1. The server publishes images and, optionally, a manifest:
+
+   ```json
+   {
+     "variants": {
+       "halloween": {
+         "name": "Spooky Notes",
+         "icon": "halloween.png",
+         "appearances": {
+           "dark": "halloween_dark.png",
+           "tinted": "halloween_tinted.png",
+           "clear": "halloween_clear.png"
+         }
+       }
+     }
+   }
+   ```
+
+   Variants use the same keys as icon_shift.yaml; relative URLs resolve
+   against the manifest URL; only https is accepted (http only for
+   `localhost`). A variant also defined in icon_shift.yaml keeps the local
+   definition.
+2. `dart run icon_shift_cli generate` downloads everything (PNG/JPEG,
+   ≤ 10 MB each), names the files after a hash of their URL, and generates
+   the Android aliases, iOS icon sets (with dark/tinted) and the Dart config.
+   Later runs reuse the downloads; `generate --refresh-remote` fetches them
+   again.
+3. Ship the build. At runtime the app switches to the variant with
+   `setIdentity('halloween')`, or with `setRemoteIcon` and `"variant":
+   "halloween"` (see [runtime identity](runtime_identity.md#remote-icons)).
+
+macOS, Windows, Linux and web can additionally show a downloaded image
+without a new build: `IconShift.setRemoteIcon`.
 
 ## What gets generated
 
@@ -76,8 +154,8 @@ dart:    { output: lib/icon_shift_config.g.dart }
 | Platform | Theme behaviour |
 | --- | --- |
 | Android 13+ | Shows the monochrome layer tinted by the wallpaper **if the user enabled themed icons**. Apps cannot enable it. |
-| iOS 18+ | Picks light/dark/tinted artwork from the icon set by the system appearance. |
-| macOS | Uses appearance variants from the asset catalog. |
+| iOS 18+ / 26 | Picks default/dark/tinted artwork from the icon set by the home-screen mode; derives Clear (iOS 26) from the regular artwork. |
+| macOS | Bundle icon from the asset catalog; IconShift swaps the Dock icon to the dark artwork in dark mode. |
 | Windows, Linux | No themed app icons. |
 | Web | A favicon can follow `prefers-color-scheme`; IconShiftThemeSync can switch favicons at runtime. |
 
