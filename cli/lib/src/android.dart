@@ -12,6 +12,9 @@ import 'plan.dart';
 /// `res/` belongs to the app and is never touched.
 const androidResourcePrefix = 'ic_icon_shift_';
 const androidValuesFile = 'values/icon_shift.xml';
+
+/// String resource holding the application label (`android:label`).
+const androidAppNameResource = 'icon_shift_app_name';
 const manifestStartMarker = '<!-- icon_shift:aliases:start -->';
 const manifestEndMarker = '<!-- icon_shift:aliases:end -->';
 const minAndroidSourceSize = 192;
@@ -140,10 +143,10 @@ ${monochrome == null ? '' : '    <monochrome android:drawable="@mipmap/${name}_m
   final launcherName = config.resolve(defaultVariantId, 'android').name;
   if (appName != null && launcherName != null && appName != launcherName) {
     plan.warn(
-      'Android: the launcher shows the activity-alias label "$launcherName" '
-      '(default name in icon_shift.yaml), not application.display_name '
-      '"$appName". Remove default.name for Android, or make them equal, if '
-      'the launcher should show "$appName".',
+      'Android: `generate` writes the default name "$launcherName" from '
+      'icon_shift.yaml as both the launcher label and the application label, '
+      'while `identity --apply` writes application.display_name "$appName". '
+      'Make them equal, or drop one, so the app does not show two names.',
     );
   }
   _planValues(config, plan, resDir, adaptive);
@@ -180,6 +183,18 @@ void _planValues(
       ..writeln('<?xml version="1.0" encoding="utf-8"?>')
       ..writeln('<!-- $generatedMarker. Do not edit. -->')
       ..writeln('<resources>');
+    final defaults = config.resolve(defaultVariantId, 'android');
+    final appName = locale == null
+        ? defaults.name
+        : _localized(defaults.names, locale);
+    if (config.android.setDisplayName && appName != null) {
+      // The application label: what settings, the app list and share sheets
+      // show. The launcher itself shows the active alias label below.
+      b.writeln(
+        '    <string name="$androidAppNameResource">'
+        '${androidString(appName)}</string>',
+      );
+    }
     for (final id in config.variantIds) {
       final r = config.resolve(id, 'android');
       final name = locale == null ? r.name : _localized(r.names, locale);
@@ -257,7 +272,8 @@ void _planManifest(
     plan.error('Android manifest "$manifestPath" not found.');
     return;
   }
-  final manifest = manifestFile.readAsStringSync();
+  final original = manifestFile.readAsStringSync();
+  final manifest = _withApplicationLabel(config, original, manifestPath, plan);
   final retired = _retiredVariants(config, manifest, plan);
 
   final b = StringBuffer()
@@ -317,13 +333,17 @@ void _planManifest(
       manifestPath,
       manifest.replaceRange(start, end + manifestEndMarker.length, snippet),
     );
-  } else {
+  } else if (manifest != original) {
+    plan.writeString(manifestPath, manifest);
+  }
+  if (start < 0 || end <= start) {
     const snippetPath = 'build/icon_shift/AndroidManifest.snippet.xml';
     plan.writeString(snippetPath, '        $snippet\n');
     plan.warn(
-      'Android: $manifestPath has no IconShift markers, so it was not '
-      'changed. Paste $snippetPath inside <application> (it includes the '
-      'markers, so later runs update it in place).',
+      'Android: $manifestPath has no IconShift markers, so no activity-alias '
+      'was inserted (only the application label, if enabled). Paste '
+      '$snippetPath inside <application> — it includes the markers, so later '
+      'runs update it in place.',
     );
   }
 
@@ -350,6 +370,52 @@ void _planManifest(
       'it out of the launcher):\n$toolingFilter',
     );
   }
+}
+
+/// Points `<application android:label>` at the generated application-label
+/// resource, which is what settings, the app list and share sheets show.
+/// (The launcher shows the *alias* label of the active variant instead.)
+/// Returns [manifest] unchanged when nothing needs to change.
+String _withApplicationLabel(
+  GeneratorConfig config,
+  String manifest,
+  String manifestPath,
+  Plan plan,
+) {
+  if (!config.android.setDisplayName) return manifest;
+  if (config.resolve(defaultVariantId, 'android').name == null) return manifest;
+
+  const wanted = '@string/$androidAppNameResource';
+  final application = RegExp(r'<application\b[^>]*>').firstMatch(manifest);
+  if (application == null) {
+    plan.error('Android: "$manifestPath" has no <application> element.');
+    return manifest;
+  }
+  final element = application.group(0)!;
+  final label = RegExp(r'android:label="([^"]*)"').firstMatch(element);
+  if (label != null && label.group(1) == wanted) return manifest;
+
+  final String updated;
+  if (label == null) {
+    // No label at all: add one right after the element name.
+    updated = element.replaceFirst(
+      '<application',
+      '<application\n        android:label="$wanted"',
+    );
+  } else {
+    updated = element.replaceRange(
+      label.start,
+      label.end,
+      'android:label="$wanted"',
+    );
+    plan.info(
+      'Android: <application android:label> now points at '
+      '"$wanted" (was "${label.group(1)}"); it is generated from the '
+      'default name in icon_shift.yaml. Set android.set_display_name: false '
+      'to keep your own label.',
+    );
+  }
+  return manifest.replaceRange(application.start, application.end, updated);
 }
 
 /// Variants that must keep a (disabled) alias: everything in `renamed:`, plus

@@ -14,7 +14,7 @@ all three in sync.
 
 | Property | Android | iOS | macOS | Windows | Linux | Web |
 | --- | --- | --- | --- | --- | --- | --- |
-| Display name (launcher) | R·pre (alias label) | B | B | B | B | B (manifest) |
+| Display name (launcher) | R·pre (alias label) + B (application label) | B (CFBundleDisplayName) | B | B | B | B (manifest) |
 | Window / document title | R·session (recent-apps label) | — | R·session | R·session | R·session | R·session |
 | Launcher icon | R·pre (alias) | R·pre (alternate icon) | B | B | B | B (manifest) |
 | Running-app icon | — | — | R·session (Dock) | R·session (title bar/taskbar) | R·session (X11 only) | R·session (favicon) |
@@ -91,6 +91,11 @@ alias before disabling the old one**, then reads the state back.
 Kotlin/Java sources), `<application android:label>` **and the IconShift
 alias labels that show the default name** (the launcher shows alias labels,
 not the application label), version (pubspec).
+
+`icon_shift_cli generate` writes the display name from `default.name`:
+`<string name="icon_shift_app_name">` per locale, with
+`<application android:label="@string/icon_shift_app_name">`, plus the
+per-variant alias labels. It never changes `applicationId`.
 Signing is never touched; a different key cannot update an installed app.
 
 ### iOS

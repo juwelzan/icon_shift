@@ -265,6 +265,150 @@ void main() {
     );
   });
 
+  group('display name generation', () {
+    const res = 'android/app/src/main/res';
+    const manifest = 'android/app/src/main/AndroidManifest.xml';
+
+    Plan generate(String yaml, {Set<String>? only}) {
+      File(path('icon_shift.yaml')).writeAsStringSync(yaml);
+      return plan(project.path, loadConfig(project.path), only: only);
+    }
+
+    test('Android: the application label comes from the default name', () {
+      const yaml = '''
+default:
+  name: Acme Notes
+  names: { de: Acme Notizen }
+  icon: assets/icon.png
+variants:
+  pro: { name: Acme Pro }
+''';
+      final result = generate(yaml, only: {'android'});
+      expect(result.hasErrors, isFalse, reason: '${result.messages}');
+      result.apply(label: 'generate');
+
+      // A resource, so it can be localized and escaped safely.
+      expect(
+        read(manifest),
+        contains('android:label="@string/icon_shift_app_name"'),
+      );
+      expect(
+        read('$res/values/icon_shift.xml'),
+        contains('<string name="icon_shift_app_name">Acme Notes</string>'),
+      );
+      expect(
+        read('$res/values-de/icon_shift.xml'),
+        contains('<string name="icon_shift_app_name">Acme Notizen</string>'),
+      );
+      // The launcher entry keeps its own per-variant labels.
+      expect(
+        read('$res/values/icon_shift.xml'),
+        contains('<string name="icon_shift_label_pro">Acme Pro</string>'),
+      );
+      expect(
+        read('android/app/build.gradle.kts'),
+        contains('applicationId = "com.example.icon_shift_example"'),
+        reason: 'the application id must never change with the name',
+      );
+      expect(
+        generate(yaml, only: {'android'}).isEmpty,
+        isTrue,
+        reason: 'idempotent',
+      );
+    });
+
+    test('Bangla and special characters survive both platforms', () {
+      const yaml = '''
+default:
+  name: "আইকন <শিফট> & কো's"
+  names: { bn: আইকন শিফট বাংলা }
+  icon: assets/icon.png
+''';
+      final result = generate(yaml, only: {'android', 'ios'});
+      expect(result.hasErrors, isFalse, reason: '${result.messages}');
+      result.apply(label: 'generate');
+
+      // Android: XML escaping plus Android's own apostrophe quoting.
+      expect(
+        read('$res/values/icon_shift.xml'),
+        contains(
+          r"<string name="
+          '"icon_shift_app_name"'
+          r">আইকন &lt;শিফট&gt; &amp; কো\'s</string>",
+        ),
+      );
+      expect(
+        read('$res/values-bn/icon_shift.xml'),
+        contains('আইকন শিফট বাংলা'),
+      );
+      // iOS: XML escaping, UTF-8 text kept as it is.
+      expect(
+        read('ios/Runner/Info.plist'),
+        contains("<string>আইকন &lt;শিফট&gt; &amp; কো's</string>"),
+      );
+      expect(
+        read('ios/Runner/bn.lproj/InfoPlist.strings'),
+        contains('"CFBundleDisplayName" = "আইকন শিফট বাংলা";'),
+      );
+      expect(
+        read('ios/Runner.xcodeproj/project.pbxproj'),
+        contains('PRODUCT_BUNDLE_IDENTIFIER = com.example.iconShiftExample;'),
+        reason: 'the bundle id must never change with the name',
+      );
+    });
+
+    test('opting out leaves both labels alone', () {
+      final result = generate(
+        '''
+default:
+  name: Acme Notes
+  icon: assets/icon.png
+android: { set_display_name: false }
+ios: { set_display_name: false }
+''',
+        only: {'android', 'ios'},
+      );
+      result.apply(label: 'generate');
+      expect(read(manifest), contains('android:label="icon_shift_example"'));
+      expect(
+        read('$res/values/icon_shift.xml'),
+        isNot(contains('icon_shift_app_name')),
+      );
+      expect(
+        read('ios/Runner/Info.plist'),
+        isNot(contains('<string>Acme Notes</string>')),
+      );
+    });
+
+    test('a configuration without a name changes no label', () {
+      final result = generate(
+        'default: { icon: assets/icon.png }',
+        only: {'android', 'ios'},
+      );
+      result.apply(label: 'generate');
+      expect(read(manifest), contains('android:label="icon_shift_example"'));
+      expect(
+        read('$res/values/icon_shift.xml'),
+        isNot(contains('icon_shift_app_name')),
+      );
+    });
+
+    test('a manifest without <application> is an error, not a guess', () {
+      File(path(manifest)).writeAsStringSync(
+        '<manifest xmlns:android="http://schemas.android.com/apk/res/android" />',
+      );
+      final result = generate(
+        'default: { name: Acme, icon: assets/icon.png }',
+        only: {'android'},
+      );
+      expect(result.hasErrors, isTrue);
+      expect(
+        result.messages.map((m) => m.text),
+        contains(contains('no <application> element')),
+      );
+    });
+  });
+
   test('generate writes the iOS home-screen name and its translations', () {
     const pbxproj = 'ios/Runner.xcodeproj/project.pbxproj';
     final originalProject = read(pbxproj);

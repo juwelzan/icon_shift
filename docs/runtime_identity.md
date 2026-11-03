@@ -122,6 +122,10 @@ ValueListenableBuilder<String?>(
 
 ### iOS names
 
+The home-screen name comes from the build: `icon_shift_cli generate` writes
+`default.name` into `CFBundleDisplayName` (see
+[icon configuration](icon_configuration.md#the-display-name)).
+
 iOS has **no API to rename an installed app**: the home-screen name is
 `CFBundleDisplayName` in the signed bundle, and alternate icons carry no
 name. `setDisplayName` and variant names therefore return `unsupported`

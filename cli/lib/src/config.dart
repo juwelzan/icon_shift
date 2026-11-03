@@ -199,6 +199,7 @@ class AndroidOptions {
     required this.manifest,
     required this.targetActivity,
     this.adaptiveBackground,
+    this.setDisplayName = true,
   });
 
   final bool enabled;
@@ -208,6 +209,11 @@ class AndroidOptions {
 
   /// `#RRGGBB`; when set, adaptive icons are generated as well.
   final String? adaptiveBackground;
+
+  /// Write the default identity's name as the application label
+  /// (`<application android:label>` → a generated string resource), so the
+  /// app list, settings and share sheets show it too.
+  final bool setDisplayName;
 }
 
 class IosOptions {
@@ -491,6 +497,7 @@ class GeneratorConfig {
       'manifest',
       'target_activity',
       'adaptive_background',
+      'set_display_name',
     });
     _allowKeys(ios, 'ios', const {
       'enabled',
@@ -544,6 +551,9 @@ class GeneratorConfig {
           android['adaptive_background'],
           'android.adaptive_background',
         ),
+        setDisplayName:
+            _bool(android['set_display_name'], 'android.set_display_name') ??
+            true,
       ),
       ios: IosOptions(
         enabled: _bool(ios['enabled'], 'ios.enabled') ?? true,

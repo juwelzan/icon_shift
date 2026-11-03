@@ -63,6 +63,7 @@ renamed:
 
 android:
   adaptive_background: "#FFFFFF"   # enables adaptive icons (and monochrome)
+  set_display_name: true           # default.name → <application android:label>
 ios:
   background_color: "#FFFFFF"
   primary_icon: false              # true: also regenerate AppIcon.appiconset
@@ -77,6 +78,88 @@ remote:
   manifest: https://cdn.example.com/icons/manifest.json  # optional
   assets_dir: assets/icon_shift/remote                  # add to flutter > assets
 ```
+
+## The display name
+
+One name in `icon_shift.yaml` reaches every platform through
+`icon_shift_cli generate`. It is written into the native build, so it changes
+with the next build and install — never by itself at runtime.
+
+```yaml
+default:
+  name: Acme Notes                      # the app's name everywhere
+  names:                                # optional translations
+    bn: অ্যাকমে নোটস
+    de: Acme Notizen
+  icon: assets/icons/app.png
+  platforms:
+    android: { name: Acme Notes Android }   # per-platform override
+```
+
+```sh
+dart run icon_shift_cli generate      # writes the native resources
+flutter build apk                     # or ipa / appbundle
+```
+
+| Platform | What `generate` writes | Where it shows |
+| --- | --- | --- |
+| Android | `<string name="icon_shift_app_name">` in `res/values*/icon_shift.xml`, and `<application android:label="@string/icon_shift_app_name">` | Settings, app list, share sheets, "App info" |
+| Android | `<string name="icon_shift_label_<variant>">` per variant, on each activity-alias | The launcher entry (the active variant's label) |
+| iOS | `CFBundleDisplayName` in `Info.plist`, plus `<lang>.lproj/InfoPlist.strings` registered in the Xcode project | The home screen and settings |
+| macOS, Windows, Linux, web | the window/document title at runtime; shipped names stay build-time (`identity --apply`) | See [runtime identity](runtime_identity.md) |
+
+Names may contain any Unicode — Bangla, emoji, spaces, `&`, `<`, quotes — and
+are escaped for XML, Android string resources and `.strings` files.
+
+**The display name is not the application id.** `generate` never touches
+`applicationId`, the Apple bundle identifier or the package name; changing
+those is a separate, deliberate step (`identity --apply`, see
+[build-time identity](build_time_identity.md)) that installs a *new* app.
+
+Opt out per platform when the project manages its own label:
+
+```yaml
+android: { set_display_name: false }   # leaves <application android:label> alone
+ios:     { set_display_name: false }   # leaves CFBundleDisplayName alone
+```
+
+### Android: two labels
+
+Android shows the **activity-alias label** in the launcher (so icon and name
+switch together per variant) and the **application label** everywhere else.
+`generate` writes both from `default.name`; variants override the launcher
+label only. If `application.display_name` differs from `default.name`,
+`generate` warns, because `identity --apply` would write a different name.
+
+### Verifying what was built
+
+```sh
+# Android: what the launcher and installer read
+aapt2 dump badging build/app/outputs/flutter-apk/app-release.apk | grep application-label
+
+# iOS
+/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' \
+  build/ios/iphonesimulator/Runner.app/Info.plist
+```
+
+### The name did not change
+
+* **The generator did not run.** `generate` is a build-time step; run it after
+  every configuration change, then rebuild.
+* **An old build is installed.** Android and iOS read the name from the
+  installed bundle: reinstall, and on iOS delete the app first if the home
+  screen keeps the old name.
+* **Stale build output.** `flutter clean`, then `generate`, then build.
+  On iOS also delete `~/Library/Developer/Xcode/DerivedData` for the project.
+* **The launcher caches labels.** Some Android launchers need a few seconds,
+  a launcher restart or a reboot.
+* **Another tool owns the label.** If `<application android:label>` is not
+  `@string/icon_shift_app_name` after `generate`, something rewrites the
+  manifest (another package, a manifest placeholder, or
+  `android.set_display_name: false`).
+* **You expected a runtime change.** Changing the name of the *installed* app
+  from inside the app is not possible on Android or iOS; see
+  [runtime identity](runtime_identity.md) for what each platform does allow.
 
 ## Appearances: Default, Dark, Clear, Tinted
 
@@ -145,7 +228,8 @@ without a new build: `IconShift.setRemoteIcon`.
 | Output | Owner | Notes |
 | --- | --- | --- |
 | `res/mipmap-*/ic_icon_shift_<id>*.png`, `mipmap-anydpi-v26/ic_icon_shift_<id>.xml` | CLI | adaptive XML includes `<monochrome>` when configured |
-| `res/values*/icon_shift.xml` | CLI | labels per locale (`values-de`, `values-pt-rBR`, `values-b+zh+Hant`) |
+| `res/values*/icon_shift.xml` | CLI | the application label (`icon_shift_app_name`) and the per-variant launcher labels, per locale (`values-de`, `values-pt-rBR`, `values-b+zh+Hant`) |
+| `<application android:label>` in AndroidManifest.xml | app | repointed at `@string/icon_shift_app_name` unless `android.set_display_name: false` |
 | manifest aliases between markers | CLI | retired aliases for removed/renamed variants |
 | `Info.plist` `CFBundleDisplayName`, `Runner/<lang>.lproj/InfoPlist.strings` + Xcode project entries | CLI | home-screen name from `default.name` / `names:`; `ios.set_display_name: false` to skip |
 | `Assets.xcassets/<id>.appiconset` | CLI | `info.author: icon_shift_cli`; light/dark/tinted |

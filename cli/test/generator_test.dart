@@ -284,10 +284,16 @@ flutter:
 ''',
       );
       final result = run();
+      // Only the application label is written; the aliases go to a snippet
+      // for the developer to paste, so nothing is injected by guesswork.
+      const manifest = 'android/app/src/main/AndroidManifest.xml';
+      final written = result.writes[manifest];
+      expect(written, isNotNull);
       expect(
-        result.writes.keys,
-        isNot(contains('android/app/src/main/AndroidManifest.xml')),
+        utf8.decode(written!),
+        contains('android:label="@string/icon_shift_app_name"'),
       );
+      expect(utf8.decode(written), isNot(contains('<activity-alias')));
       expect(
         result.writes.keys,
         contains('build/icon_shift/AndroidManifest.snippet.xml'),

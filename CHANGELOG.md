@@ -43,6 +43,15 @@ Build time (`icon_shift_cli`):
 * Images may be `https://` URLs, and `remote.manifest` merges variants
   published by a server. Downloads are validated, cached in
   `remote.assets_dir`, and refreshed with `generate --refresh-remote`.
+* Android display name: `generate` now writes `default.name` as the
+  application label — `<string name="icon_shift_app_name">` per locale, with
+  `<application android:label="@string/icon_shift_app_name">`. Previously
+  only the per-variant launcher labels were generated, so settings, the app
+  list and share sheets kept the Flutter template name. Opt out with
+  `android.set_display_name: false`. `applicationId` is never touched.
+* `identity --apply` now writes an `@string/` application label into the
+  resource file that actually defines the key, instead of assuming
+  `res/values/strings.xml`.
 * iOS home-screen name: `generate` now writes `default.name` to
   `CFBundleDisplayName` and the `names:` translations to
   `<lang>.lproj/InfoPlist.strings`, registered in the Xcode project

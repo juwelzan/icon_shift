@@ -679,7 +679,15 @@ void _planAndroidLabel(
   }
   if (label.startsWith('@string/')) {
     final key = label.substring('@string/'.length);
-    editFile(plan, 'android/app/src/main/res/values/strings.xml', [
+    final target = _stringResourceFile(projectDir, key);
+    if (target == null) {
+      plan.error(
+        '$manifest: <application android:label> is "$label", but no '
+        'res/values/*.xml defines "$key". Add it, or set a literal label.',
+      );
+      return;
+    }
+    editFile(plan, target, [
       Replacement(
         '<string name="$key">',
         RegExp('<string name="${RegExp.escape(key)}">[^<]*</string>'),
@@ -687,6 +695,15 @@ void _planAndroidLabel(
             '<string name="$key">${xmlEscape(name).replaceAll("'", r"\'")}</string>',
       ),
     ]);
+    final content = _read(projectDir, target);
+    if (content != null && hasGeneratedMarker(content)) {
+      plan.warn(
+        'Android: "$key" lives in the generated "$target", so '
+        '`icon_shift_cli generate` rewrites it from icon_shift.yaml. Set '
+        'default.name (or default.platforms.android.name) to "$name" there '
+        'to keep it.',
+      );
+    }
   } else {
     editFile(plan, manifest, [
       Replacement(
@@ -696,6 +713,21 @@ void _planAndroidLabel(
       ),
     ]);
   }
+}
+
+/// The res/values/*.xml file defining the string [key], if any.
+String? _stringResourceFile(String projectDir, String key) {
+  const dir = 'android/app/src/main/res/values';
+  final values = Directory(p.join(projectDir, dir));
+  if (!values.existsSync()) return null;
+  final pattern = RegExp('<string name="${RegExp.escape(key)}">');
+  for (final file in values.listSync().whereType<File>()) {
+    if (!file.path.endsWith('.xml')) continue;
+    if (pattern.hasMatch(file.readAsStringSync())) {
+      return '$dir/${p.basename(file.path)}';
+    }
+  }
+  return null;
 }
 
 /// The launcher shows the labels of IconShift's activity-aliases, not

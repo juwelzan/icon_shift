@@ -1,5 +1,8 @@
 # Troubleshooting
 
+The display name does not change: see
+[icon configuration](icon_configuration.md#the-name-did-not-change).
+
 Start with `dart run icon_shift_cli doctor` and, in the app,
 `print((await IconShift.getDiagnostics()).toReport())`.
 
