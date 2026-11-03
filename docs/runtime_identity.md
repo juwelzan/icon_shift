@@ -120,6 +120,16 @@ ValueListenableBuilder<String?>(
 )
 ```
 
+### iOS names
+
+iOS has **no API to rename an installed app**: the home-screen name is
+`CFBundleDisplayName` in the signed bundle, and alternate icons carry no
+name. `setDisplayName` and variant names therefore return `unsupported`
+(`buildRequired`) on iOS. Set the name at build time instead:
+`icon_shift_cli generate` writes `default.name` from icon_shift.yaml into
+Info.plist and each `names:` translation into `<lang>.lproj/InfoPlist.strings`
+(registered in the Xcode project). Rebuild and reinstall to see it.
+
 ## Remote icons
 
 ```dart

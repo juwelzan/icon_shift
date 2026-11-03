@@ -86,7 +86,7 @@ Future<RemoteResolution> resolveRemote(
   var downloaded = 0;
   for (final source in urls) {
     final url = Uri.parse(source);
-    final base = 'r_${_fnv1a64(source)}';
+    final base = 'r_${fnv1a64(source)}';
     final existing = _cached(dir, base);
     if (existing != null && !refresh) {
       local[source] = p.posix.join(config.remote.assetsDir, existing);
@@ -168,8 +168,8 @@ String? _imageExtension(Uint8List b) {
   return null;
 }
 
-/// Stable 64-bit FNV-1a hash as 16 hex digits (file names only).
-String _fnv1a64(String value) {
+/// Stable 64-bit FNV-1a hash as 16 hex digits (file names, Xcode ids).
+String fnv1a64(String value) {
   // 32-bit halves keep the intermediate products below 2^63.
   var hi = 0xcbf29ce4, lo = 0x84222325;
   for (final byte in utf8.encode(value)) {

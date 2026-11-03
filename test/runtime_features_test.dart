@@ -252,7 +252,7 @@ void main() {
         final result = await engine.setDisplayName('X');
         expect(result.displayName.status, OperationStatus.unsupported);
         expect(result.displayName.errorCode, IconShiftErrorCode.buildRequired);
-        expect(result.displayName.suggestion, contains('identity --apply'));
+        expect(result.displayName.suggestion, contains('icon_shift_cli generate'));
       },
     );
 

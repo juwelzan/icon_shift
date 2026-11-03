@@ -66,6 +66,8 @@ android:
 ios:
   background_color: "#FFFFFF"
   primary_icon: false              # true: also regenerate AppIcon.appiconset
+  set_display_name: true           # default.name → CFBundleDisplayName,
+                                   # names: → <lang>.lproj/InfoPlist.strings
 macos:   { app_icon: false }
 windows: { app_icon: false }
 linux:   { icons: false, output_dir: linux/packaging }
@@ -145,6 +147,7 @@ without a new build: `IconShift.setRemoteIcon`.
 | `res/mipmap-*/ic_icon_shift_<id>*.png`, `mipmap-anydpi-v26/ic_icon_shift_<id>.xml` | CLI | adaptive XML includes `<monochrome>` when configured |
 | `res/values*/icon_shift.xml` | CLI | labels per locale (`values-de`, `values-pt-rBR`, `values-b+zh+Hant`) |
 | manifest aliases between markers | CLI | retired aliases for removed/renamed variants |
+| `Info.plist` `CFBundleDisplayName`, `Runner/<lang>.lproj/InfoPlist.strings` + Xcode project entries | CLI | home-screen name from `default.name` / `names:`; `ios.set_display_name: false` to skip |
 | `Assets.xcassets/<id>.appiconset` | CLI | `info.author: icon_shift_cli`; light/dark/tinted |
 | `AppIcon.appiconset` (iOS/macOS), `app_icon.ico`, `web/icons/*`, `web/favicon.png` | app | only with the opt-in flags; backed up first |
 | `linux/packaging/*` | CLI | hicolor icons + `<app-id>.desktop` for your packaging |

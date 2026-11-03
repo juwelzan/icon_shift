@@ -905,11 +905,16 @@ class IconShiftEngine {
         _ => 'Check IconShift.validateConfiguration().',
       },
       IconShiftErrorCode.buildRequired =>
-        property == IdentityProperty.displayName
-            ? 'Set it at build time (application.display_name in '
+        property != IdentityProperty.displayName
+            ? 'Change it at build time and rebuild.'
+            : targetPlatform == IconShiftPlatform.ios
+            ? 'iOS reads the home-screen name from the signed app. Set '
+                  'default.name (and names: for translations) in '
+                  'icon_shift.yaml, run `icon_shift_cli generate`, then '
+                  'rebuild and reinstall.'
+            : 'Set it at build time (application.display_name in '
                   'icon_shift.yaml, then `icon_shift_cli identity --apply`) '
-                  'and rebuild.'
-            : 'Change it at build time and rebuild.',
+                  'and rebuild.',
       IconShiftErrorCode.appNotActive =>
         'Call it while the app is in the foreground, e.g. from a button '
             'handler.',

@@ -217,6 +217,7 @@ class IosOptions {
     required this.backgroundColor,
     required this.projectDir,
     this.primaryIcon = false,
+    this.setDisplayName = true,
   });
 
   final bool enabled;
@@ -229,6 +230,10 @@ class IosOptions {
 
   /// Also (re)write the primary `AppIcon.appiconset` from the default icon.
   final bool primaryIcon;
+
+  /// Write the default identity's name (and its translations) as the
+  /// home-screen name: `CFBundleDisplayName` and `InfoPlist.strings`.
+  final bool setDisplayName;
 }
 
 /// Opt-in icon outputs for platforms whose runtime uses Flutter assets.
@@ -493,6 +498,7 @@ class GeneratorConfig {
       'background_color',
       'project_dir',
       'primary_icon',
+      'set_display_name',
     });
     _allowKeys(macos, 'macos', const {'app_icon', 'asset_catalog'});
     _allowKeys(windows, 'windows', const {'app_icon', 'icon_path'});
@@ -549,6 +555,8 @@ class GeneratorConfig {
             '#FFFFFF',
         projectDir: _path(ios['project_dir'], 'ios.project_dir') ?? 'ios',
         primaryIcon: _bool(ios['primary_icon'], 'ios.primary_icon') ?? false,
+        setDisplayName:
+            _bool(ios['set_display_name'], 'ios.set_display_name') ?? true,
       ),
       outputs: DesktopWebOptions(
         macosAppIcon: _bool(macos['app_icon'], 'macos.app_icon') ?? false,

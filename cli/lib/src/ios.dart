@@ -6,6 +6,7 @@ import 'package:path/path.dart' as p;
 
 import 'config.dart';
 import 'images.dart';
+import 'ios_name.dart';
 import 'ownership.dart';
 import 'plan.dart';
 
@@ -29,6 +30,8 @@ void planIos(GeneratorConfig config, Plan plan, Map<String, SourceIcon> icons) {
     );
     return;
   }
+
+  planIosDisplayName(config, plan);
 
   final planned = <String>{};
   final withClear = <String>[

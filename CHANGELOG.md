@@ -32,6 +32,11 @@ Build time (`icon_shift_cli`):
 * Images may be `https://` URLs, and `remote.manifest` merges variants
   published by a server. Downloads are validated, cached in
   `remote.assets_dir`, and refreshed with `generate --refresh-remote`.
+* iOS home-screen name: `generate` now writes `default.name` to
+  `CFBundleDisplayName` and the `names:` translations to
+  `<lang>.lproj/InfoPlist.strings`, registered in the Xcode project
+  (previously the iOS name never followed icon_shift.yaml and translations
+  were Android-only). Opt out with `ios.set_display_name: false`.
 * Fix: `identity --apply` with a `display_name` did not change the Android
   launcher name, because the launcher shows the IconShift alias labels; it
   now updates the aliases that show the default name. `generate` warns when

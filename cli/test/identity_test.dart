@@ -265,6 +265,53 @@ void main() {
     );
   });
 
+  test('generate writes the iOS home-screen name and its translations', () {
+    const pbxproj = 'ios/Runner.xcodeproj/project.pbxproj';
+    final originalProject = read(pbxproj);
+    Plan generate(String yaml) {
+      File(path('icon_shift.yaml')).writeAsStringSync(yaml);
+      return plan(project.path, loadConfig(project.path), only: {'ios'});
+    }
+
+    const localized = '''
+default:
+  name: Acme "Notes"
+  names: { de: Acme Notizen, pt_BR: Acme Notas }
+  icon: assets/icon.png
+''';
+    var result = generate(localized);
+    expect(result.hasErrors, isFalse, reason: '${result.messages}');
+    result.apply(label: 'generate');
+
+    expect(
+      read('ios/Runner/Info.plist'),
+      contains('<string>Acme &quot;Notes&quot;</string>'),
+    );
+    expect(
+      read('ios/Runner/pt-BR.lproj/InfoPlist.strings'),
+      contains('"CFBundleDisplayName" = "Acme Notas";'),
+    );
+    final project1 = read(pbxproj);
+    expect(project1, contains('isa = PBXVariantGroup;'));
+    expect(project1, contains('path = "pt-BR.lproj/InfoPlist.strings"'));
+    expect(project1, contains('path = de.lproj/InfoPlist.strings'));
+    expect(project1, contains('/* InfoPlist.strings in Resources */,'));
+    expect(project1, contains('"pt-BR",'));
+    expect(generate(localized).isEmpty, isTrue, reason: 'idempotent');
+
+    // Without translations the files and project entries go away again.
+    result = generate('default: { name: Acme, icon: assets/icon.png }');
+    result.apply(label: 'generate');
+    expect(exists('ios/Runner/de.lproj/InfoPlist.strings'), isFalse);
+    final project2 = read(pbxproj);
+    expect(project2, isNot(contains('InfoPlist.strings')));
+    expect(
+      project2.replaceAll(RegExp(r'\t"pt-BR",\n\t\t\t|\tde,\n\t\t\t'), ''),
+      originalProject,
+      reason: 'only knownRegions keep the added languages',
+    );
+  });
+
   test('profiles merge over application', () {
     final result = applyIdentity(identityYaml, 'staging')
       ..apply(label: 'identity');
