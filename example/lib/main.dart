@@ -123,14 +123,26 @@ class _DemoPageState extends State<DemoPage> {
     }
   }
 
-  static String _summary(IconShiftResult r) {
-    final status = r.isComplete
-        ? 'Done: icon ${r.icon.status.name}, name ${r.displayName.status.name}'
-        : r.hasFailures
-        ? 'Failed: ${r.icon.message ?? r.displayName.message}'
-        : 'Partly applied: icon ${r.icon.status.name}, name ${r.displayName.status.name}';
-    final note = r.hasFailures ? null : r.displayName.message;
-    return note == null ? status : '$status\n$note';
+  /// Says what the user will see, not the enum names: "unchanged" means the
+  /// value is already in effect, which reads like failure otherwise.
+  String _summary(IconShiftResult r) {
+    String? part(String what, OperationOutcome o) => switch (o.status) {
+      OperationStatus.applied => '$what applied',
+      OperationStatus.pending => '$what: waiting for the user or the OS',
+      OperationStatus.unchanged => '$what already in effect',
+      OperationStatus.skipped => '$what skipped',
+      OperationStatus.unsupported => '$what not possible on this platform',
+      OperationStatus.failed => '$what failed',
+      OperationStatus.notRequested => null,
+    };
+    final parts = [?part('Icon', r.icon), ?part('Name', r.displayName)];
+    final lines = [
+      if (parts.isEmpty) 'Nothing to change' else parts.join(' · '),
+      // The OS's own words: where it shows, or why it could not.
+      ?r.icon.message,
+      if (r.displayName.message != r.icon.message) ?r.displayName.message,
+    ];
+    return lines.join('\n');
   }
 
   @override
@@ -214,19 +226,43 @@ class _DemoPageState extends State<DemoPage> {
     ),
   );
 
+  /// Where a runtime name change is actually visible on this platform.
+  static String _whereNameShows(IdentityScope scope) => switch (scope) {
+    IdentityScope.launcher => 'Launcher',
+    IdentityScope.taskSwitcher => 'Recent apps',
+    IdentityScope.windowTitle => 'Window title',
+    IdentityScope.browserTab => 'Browser tab',
+    IdentityScope.launcherShortcut => 'Home-screen shortcut',
+    IdentityScope.runningApp => 'Dock / taskbar',
+    IdentityScope.none => 'Nowhere',
+  };
+
   Widget _stateCard() {
     final s = _state;
-    if (s == null) return const SizedBox.shrink();
+    final caps = _capabilities;
+    if (s == null || caps == null) return const SizedBox.shrink();
+    final launcherName = _variants
+        .where((v) => v.isCurrentIcon)
+        .map((v) => v.displayName)
+        .firstOrNull;
     return _section('Current identity', [
+      // The two names are different things on Android; spell out which is
+      // which so "unchanged" is never a mystery.
+      if (caps.iconAndNameLinked && launcherName != null)
+        Text('Launcher (compiled in): $launcherName'),
+      Text(
+        '${_whereNameShows(caps.displayName.scope)} (runtime): '
+        '${s.nativeDisplayName ?? 'unknown'}',
+      ),
+      if (_shortcut?.isPinned ?? false)
+        Text('Home-screen shortcut: ${_shortcut!.name}'),
+      const SizedBox(height: 4),
       Text(
         'Requested: identity=${s.requestedIdentity ?? '-'}, '
         'icon=${s.requestedIconVariant ?? 'default'}, '
         'name=${s.requestedDisplayName ?? '(shipped)'}',
       ),
-      Text(
-        'Reported by the OS: icon=${s.nativeIconVariant ?? 'unknown'}, '
-        'name=${s.nativeDisplayName ?? 'unknown'}',
-      ),
+      Text('Icon reported by the OS: ${s.nativeIconVariant ?? 'unknown'}'),
       if (!s.isIconInSync || !s.isDisplayNameInSync)
         const Text(
           'The OS reports something different from the request.',
