@@ -119,17 +119,17 @@ abstract final class IconShift {
   /// home screen and app drawer — without a rebuild or reinstall, and reads
   /// the result back from the OS:
   ///
-  /// | Platform | What changes |
+  /// | Platform | Result |
   /// | --- | --- |
-  /// | Android | the app entry itself, to any name compiled in as a variant in `icon_shift.yaml`; other names are `unsupported` |
-  /// | iOS | nothing — no public API renames an installed app (`unsupported`) |
-  /// | macOS, Windows, Linux, web | the window / tab title |
+  /// | Android | `success` for any name compiled in as a variant in `icon_shift.yaml`; otherwise `requiresPreconfiguredLauncher` |
+  /// | iOS | `requiresNewBuild` — no public API renames an installed app |
+  /// | macOS, Windows, Linux, web | `unsupported` |
   ///
   /// No widget, shortcut or second icon is ever created.
   ///
   /// ```dart
   /// final r = await IconShift.changeLauncherName('ABC School');
-  /// if (r.isAppEntryChanged) { /* home screen and drawer show it */ }
+  /// if (r.isSuccess) { /* home screen and drawer show it */ }
   /// ```
   static Future<LauncherNameResult> changeLauncherName(String name) =>
       _require.changeLauncherName(name);
@@ -143,8 +143,9 @@ abstract final class IconShift {
       _require.refreshLauncherName();
 
   /// Fetches the active tenant's branding and applies its name to the
-  /// launcher entry. `null` when no tenant is loaded or the branding has no
-  /// name.
+  /// launcher entry: validates it, changes nothing when the launcher
+  /// already shows it, and otherwise reports the exact outcome. `null` when
+  /// no tenant is loaded or the branding has no name.
   static Future<LauncherNameResult?> syncBranding() async {
     final state = await branding.refresh();
     final name = state.profile.displayName;

@@ -68,6 +68,18 @@ class MethodChannelIconShift extends IconShiftPlatformInterface {
   }
 
   @override
+  Future<List<NativeLauncherIdentity>> getLauncherIdentities() async {
+    if (IconShiftPlatform.current != IconShiftPlatform.android) return const [];
+    final list = await methodChannel.invokeListMethod<Object?>(
+      'getLauncherIdentities',
+    );
+    return [
+      for (final item in list ?? const [])
+        NativeLauncherIdentity.fromMap(item! as Map<Object?, Object?>),
+    ];
+  }
+
+  @override
   Future<Map<String, String>> loadSelection() async {
     final map = await methodChannel.invokeMapMethod<String, String>(
       'loadSelection',

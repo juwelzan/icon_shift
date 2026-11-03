@@ -291,11 +291,13 @@ class BrandingController extends ChangeNotifier
     if (capabilities.iconAndNameLinked && name != null) {
       final launcher = await _engine.changeLauncherName(name);
       return NativeBrandingReport(
-        scope: launcher.isAppEntryChanged
-            ? NativeBrandingScope.applied
-            : launcher.scope == LauncherNameScope.unsupported
-            ? NativeBrandingScope.requiresBuild
-            : NativeBrandingScope.unsupported,
+        scope: switch (launcher.status) {
+          LauncherNameStatus.success => NativeBrandingScope.applied,
+          LauncherNameStatus.requiresPreconfiguredLauncher ||
+          LauncherNameStatus.requiresNewBuild =>
+            NativeBrandingScope.requiresBuild,
+          _ => NativeBrandingScope.unsupported,
+        },
         result: launcher.result,
         message: launcher.message,
       );

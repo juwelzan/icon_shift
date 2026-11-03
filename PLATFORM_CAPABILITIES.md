@@ -20,7 +20,7 @@ all three in sync.
 | Running-app icon | — | — | R·session (Dock) | R·session (title bar/taskbar) | R·session (X11 only) | R·session (favicon) |
 | Adaptive / maskable icon | R·pre (part of alias) + B | — | — | — | — | B |
 | Themed icon (monochrome, dark, tinted, clear) | B (user enables) | B (system applies dark/tinted; derives clear) | R·session (dark Dock icon) + B | R·session (dark icon) | R·session (dark icon) | R·session (dark favicon) + B |
-| Name + icon chosen at runtime | R·session (home-screen shortcut, API 26+) | — | R·session | R·session | R·session | R·session |
+| Name + icon chosen at runtime | — (launcher: compiled-in names only) | — | R·session | R·session | R·session | R·session |
 | Downloaded (server) icon | — (build it in: `remote:`) | — (build it in: `remote:`) | R·session | R·session | R·session | R·session |
 | Theme color | — | — | — | — | — | R·session + B |
 | Application id (package / bundle / app id) | B, **new app** | B, **new app** | B, **new app** | B (MSIX), **new app** | B, **new app** | B (manifest id), new PWA |
@@ -78,14 +78,11 @@ alias before disabling the old one**, then reads the state back.
   `IconShift.displayNameListenable`.
 * Downloaded images can never become the launcher icon; server icons are
   added at build time (`remote:` in icon_shift.yaml).
-* **Home-screen shortcut** (`setShortcutIdentity`, `setArbitraryIdentity`):
-  the only launcher entry whose name and icon are chosen while the app runs.
-  `ShortcutManager.requestPinShortcut` asks the user once (Android 8+, API
-  26, and a launcher that supports pinning); afterwards `updateShortcuts`
-  changes the label and icon silently, as often as wanted. It is an extra
-  entry beside the app: the app drawer and settings keep the built-in name
-  and icon, and no app may remove a pinned shortcut — `disableShortcuts`
-  only greys it out.
+* **Launcher name after install** (`changeLauncherName`): switches the
+  enabled activity-alias to the one carrying the requested label; the home
+  screen and app drawer entry are renamed in place. Only labels compiled into
+  the APK are possible (`requiresPreconfiguredLauncher` otherwise). IconShift
+  creates no widget, shortcut or second launcher entry.
 
 **Build time.** `applicationId` (new app, separate data), `namespace` (moves
 Kotlin/Java sources), `<application android:label>` **and the IconShift

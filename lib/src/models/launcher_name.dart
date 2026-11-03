@@ -1,71 +1,127 @@
 import 'package:flutter/foundation.dart';
 
+import '../config/platform.dart';
 import 'result.dart';
 
-/// Where a launcher name ended up after `IconShift.changeLauncherName`.
-enum LauncherNameScope {
-  /// The app's own launcher entry — home screen and app drawer (Android:
-  /// the active activity-alias).
-  appEntry,
+/// The outcome of `IconShift.changeLauncherName`. Only [success] means the
+/// OS switched the launcher entry to the requested name.
+enum LauncherNameStatus {
+  /// The OS switched the app's own launcher entry and reports the requested
+  /// name for it (Android: PackageManager read-back). Whether the launcher
+  /// app has already redrawn its icon is not observable from inside the
+  /// app; see [LauncherNameResult.launcherRefresh].
+  success,
 
-  /// A window or browser-tab title, the nearest equivalent on desktop and
-  /// web.
-  windowTitle,
+  /// The name is not one of the launcher identities compiled into the app.
+  /// Nothing was changed. Ship a build that contains it once; afterwards it
+  /// switches at runtime like the others.
+  requiresPreconfiguredLauncher,
 
-  /// The OS cannot show this name on the installed app's launcher entry:
-  /// iOS for any name, Android for a name that is not compiled in.
+  /// The platform only takes a new launcher name from a new build (iOS).
+  requiresNewBuild,
+
+  /// This platform has no launcher name an app can change (desktop, web).
   unsupported,
+
+  /// The native call failed or the OS refused it.
+  platformError,
+
+  /// The switch was requested but the OS does not report the new name, or
+  /// more than one launcher entry is enabled.
+  failed,
+}
+
+/// What the app can know about the launcher app's display after a switch.
+enum LauncherRefresh {
+  /// Nothing was switched.
+  notApplicable,
+
+  /// PackageManager switched the component. Launchers pick it up through
+  /// the package-changed broadcast — usually within a second or two; a few
+  /// third-party launchers only after their own restart. An app cannot read
+  /// another app's screen, so this cannot be confirmed from inside the app.
+  expected,
 }
 
 /// What `IconShift.changeLauncherName` did, read back from the OS.
 @immutable
 class LauncherNameResult {
   const LauncherNameResult({
-    required this.requested,
-    required this.scope,
+    required this.requestedName,
     required this.status,
+    required this.platform,
     required this.result,
-    this.appEntryName,
+    this.appliedName,
+    this.changed = false,
+    this.enabledEntries,
     this.availableNames = const [],
+    this.launcherRefresh = LauncherRefresh.notApplicable,
     this.message,
   });
 
   /// The name that was asked for.
-  final String requested;
+  final String requestedName;
 
-  final LauncherNameScope scope;
+  final LauncherNameStatus status;
 
-  /// `applied`, `unchanged`, `unsupported` or `failed` (the launcher did not
-  /// report the new name).
-  final OperationStatus status;
+  final IconShiftPlatform? platform;
+
+  /// The launcher entry's name as the OS reports it **after** the call
+  /// (Android: the label of the enabled activity-alias).
+  final String? appliedName;
+
+  /// `true` when this call switched the entry; `false` when it already
+  /// showed [requestedName] or nothing changed.
+  final bool changed;
+
+  /// How many IconShift launcher entries are enabled after the call
+  /// (Android). Anything but 1 is reported as [LauncherNameStatus.failed].
+  final int? enabledEntries;
+
+  /// Names the launcher entry can switch to on this install, read from the
+  /// OS (Android: the labels of the compiled activity-aliases).
+  final List<String> availableNames;
+
+  final LauncherRefresh launcherRefresh;
+
+  final String? message;
 
   /// The underlying per-property outcome.
   final IconShiftResult result;
 
-  /// The app entry's name as the OS reports it **after** the call.
-  final String? appEntryName;
+  bool get isSuccess => status == LauncherNameStatus.success;
 
-  /// Names the app entry can switch to on this install (Android: the
-  /// labels compiled into the activity-aliases).
-  final List<String> availableNames;
+  /// The status as a stable string: `success`,
+  /// `requires_preconfigured_launcher`, `requires_new_build`,
+  /// `unsupported`, `platform_error`, `failed`.
+  String get statusCode => switch (status) {
+    LauncherNameStatus.success => 'success',
+    LauncherNameStatus.requiresPreconfiguredLauncher =>
+      'requires_preconfigured_launcher',
+    LauncherNameStatus.requiresNewBuild => 'requires_new_build',
+    LauncherNameStatus.unsupported => 'unsupported',
+    LauncherNameStatus.platformError => 'platform_error',
+    LauncherNameStatus.failed => 'failed',
+  };
 
-  final String? message;
-
-  /// The app entry itself now shows [requested] — on Android in the app
-  /// drawer too.
-  bool get isAppEntryChanged =>
-      scope == LauncherNameScope.appEntry &&
-      (status == OperationStatus.applied ||
-          status == OperationStatus.unchanged) &&
-      appEntryName == requested;
-
-  bool get isSuccessful =>
-      status == OperationStatus.applied || status == OperationStatus.unchanged;
+  Map<String, Object?> toJson() => {
+    'status': statusCode,
+    'requestedName': requestedName,
+    'appliedName': appliedName,
+    'platform': platform?.name,
+    'changed': changed,
+    'enabledEntries': ?enabledEntries,
+    'availableNames': availableNames,
+    'launcherRefresh': launcherRefresh.name,
+    'message': ?message,
+  };
 
   @override
   String toString() =>
-      'LauncherNameResult("$requested" → ${scope.name}, ${status.name}, '
-      'app entry: ${appEntryName ?? '?'}'
+      'LauncherNameResult($statusCode, requested: "$requestedName", '
+      'applied: ${appliedName == null ? '?' : '"$appliedName"'}'
+      '${changed ? ', changed' : ''}'
+      '${enabledEntries == null ? '' : ', enabled entries: $enabledEntries'}'
       '${message == null ? '' : ' — $message'})';
 }
 
@@ -85,15 +141,15 @@ class LauncherNameInfo {
   /// The last name passed to `changeLauncherName`, if any.
   final String? requestedName;
 
-  /// Names the app entry can switch to without a rebuild.
+  /// Names the launcher entry can switch to without a rebuild.
   final List<String> availableNames;
 
-  /// The app entry can change at runtime at all (Android: yes, among
-  /// [availableNames]; iOS: no).
+  /// The launcher entry can change at runtime at all (Android: yes, among
+  /// [availableNames]; iOS, desktop, web: no).
   final bool canSwitchAppEntry;
 
   @override
   String toString() =>
-      'LauncherNameInfo(app entry: $appEntryName, '
+      'LauncherNameInfo(launcher shows: $appEntryName, '
       'available: $availableNames)';
 }

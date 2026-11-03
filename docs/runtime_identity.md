@@ -82,60 +82,82 @@ variants.
 
 ```dart
 final r = await IconShift.changeLauncherName('ABC School');
-r.isAppEntryChanged;   // home screen and app drawer show it
-r.appEntryName;        // read back from the OS after the call
-r.scope;               // appEntry · shortcut · windowTitle · unsupported
+r.status;        // success · requiresPreconfiguredLauncher · requiresNewBuild
+                 // · unsupported · permissionOrPlatformError · failed
+r.changed;       // false when the launcher already showed it
+r.appEntryName;  // read back from the OS after the call
 
-await IconShift.getLauncherName();     // app entry, shortcut, available names
+await IconShift.getLauncherName();     // what the launcher shows + available names
 await IconShift.refreshLauncherName(); // re-apply the last request
 await IconShift.syncBranding();        // refresh branding, apply its name
 ```
 
-No rebuild, no reinstall, no store update: the change happens on the
-installed app. What each OS allows:
+This targets the installed app's **own launcher entry** — the name under its
+icon on the home screen and in the app drawer — on the same install: no
+rebuild, no reinstall, no store update. IconShift never creates a widget, a
+shortcut or a second icon to stand in for it. `success` is only returned when
+the OS reports the new name.
 
 ### Android — yes, among the names compiled into the app
 
-The launcher reads the label of the enabled activity-alias.
-`changeLauncherName` finds the variant whose name matches, enables its alias
-with `PackageManager.setComponentEnabledSetting` (the new one first, so the
-app never has zero launcher entries), and reads the label back. The home
-screen **and** the app drawer change; data and the application id are kept.
+The launcher reads the label of the app's enabled launcher activity — with
+IconShift, one `activity-alias` per name. `changeLauncherName` finds the
+variant whose name matches, enables its alias with
+`PackageManager.setComponentEnabledSetting` (the new one first, so the app
+never has zero launcher entries), disables the previous one, and reads the
+label back. The same icon on the home screen and the same entry in the app
+drawer show the new name; data, the application id and the install are kept.
 
-* The names have to be in the APK: add each as a variant in
-  `icon_shift.yaml` (`abc: { name: ABC School }`) and run
-  `icon_shift_cli generate` once. A server can then switch between them at
-  any time. `getLauncherName().availableNames` lists them.
-* A name that is **not** in the APK cannot become the app entry's label —
-  Android has no API to set an arbitrary label on a component. IconShift
-  places it on a home-screen shortcut instead (`scope: shortcut`; the user
-  accepts once, later renames are silent); the app drawer keeps the app
-  entry's name. `allowShortcut: false` turns that off.
-* The app must be in the foreground to request the shortcut.
-* Launchers may take a few seconds to redraw. A name-only variant keeps the
-  current icon; a variant with its own icon changes it too (the result says
-  so).
+* The names have to be in the APK. Add each as a name-only variant in
+  `icon_shift.yaml` and run `icon_shift_cli generate` once:
+
+  ```yaml
+  variants:
+    abc: { name: ABC School }
+    xyz: { name: XYZ College }
+  ```
+
+  A server can then switch between them at any time;
+  `getLauncherName().availableNames` lists them. A name-only variant keeps
+  the current icon.
+* A name that is **not** in the APK returns `requiresPreconfiguredLauncher`
+  and changes nothing: Android has no API to give a component a label that
+  is not compiled into the app. Ship a build containing the new name once;
+  from then on it switches at runtime like the others.
+* Launchers may take a moment to redraw; a few third-party launchers only
+  refresh after a restart.
 
 ### iOS — no
 
 There is no public API to change an installed app's Home Screen name. It is
 `CFBundleDisplayName` in the signed bundle; `setAlternateIconName` changes
-only the icon, and alternate icons carry no name. Writing to `Info.plist` at
-runtime is impossible (the bundle is read-only and signed). `changeLauncherName`
-returns `scope: unsupported`, `errorCode: buildRequired`, and changes
-nothing. A different name needs a new build (`icon_shift_cli brand`).
+only the icon, and alternate icons carry no name. The bundle is read-only and
+signed, so `Info.plist` cannot be written at runtime. `changeLauncherName`
+returns `requiresNewBuild` and changes nothing; a different name needs a new
+build (`icon_shift_cli brand`).
+
+### Desktop and web
+
+There is no launcher name an app can change: `unsupported`.
+`setDisplayName` changes the window / tab title instead.
 
 ### Verified on installed apps
 
-One install of an app named "Schoolmate", renamed at runtime; the launcher was
-read with `uiautomator` on Android and a Home Screen screenshot on iOS:
+One install of "Schoolmate", renamed at runtime. Android 10 was read with
+`uiautomator` and screenshots (home screen, app drawer, shortcut records);
+iOS 26 with a Home Screen screenshot.
 
-| Call | Android 10 home screen | Android 10 app drawer | iOS 26 Home Screen |
+| Call | Android home screen | Android app drawer | iOS Home Screen |
 | --- | --- | --- | --- |
 | (installed) | Schoolmate | Schoolmate | Schoolmate |
-| `changeLauncherName('ABC School')` | ABC School | ABC School | Schoolmate (`unsupported`) |
+| `changeLauncherName('ABC School')` | ABC School (same icon, same place) | ABC School | Schoolmate — `requiresNewBuild` |
 | `changeLauncherName('XYZ College')` | XYZ College | XYZ College | — |
-| `changeLauncherName('Sunrise Academy')`, not compiled in | + shortcut "Sunrise Academy" | XYZ College | — |
+| `changeLauncherName('Sunrise Academy')`, not compiled in | XYZ College — `requiresPreconfiguredLauncher` | XYZ College | — |
+| `changeLauncherName('Schoolmate')` | Schoolmate | Schoolmate | — |
+
+Every step: one launcher entry, no shortcut records, the same package UID and
+install time, and the app's stored data intact; tapping the renamed icon
+opens the app.
 
 ## Display name vs. other names
 
@@ -193,60 +215,24 @@ name. `setDisplayName` and variant names therefore return `unsupported`
 Info.plist and each `names:` translation into `<lang>.lproj/InfoPlist.strings`
 (registered in the Xcode project). Rebuild and reinstall to see it.
 
-## Any name and icon at runtime
+## Any name and icon on desktop and web
 
-`setDisplayName` and `setIdentity` are bound by what each OS allows for the
-**app's own** entry. For a name and image chosen while the app runs — typed
-by the user, or sent by a server — use one call that picks the strongest
-mechanism the platform has:
+macOS, Windows, Linux and web accept values chosen at runtime for the app
+itself; one call applies a name and an image there:
 
 ```dart
 final r = await IconShift.setArbitraryIdentity(
   name: 'Work Notes',
-  icon: AppIcon.asset('assets/icons/work.png'),   // or remoteIcon: …
+  remoteIcon: icon,            // or variant: 'dark'
 );
 ```
 
 | Platform | What changes |
 | --- | --- |
-| macOS, Windows, Linux | Dock/taskbar icon and window title of the app itself |
+| macOS, Windows, Linux | Dock/taskbar icon and window title |
 | Web | favicon and document title |
-| Android | a **home-screen shortcut** with exactly that name and icon |
-| iOS | the icon of `variant`; the name cannot change at runtime at all |
-
-### Android home-screen shortcut
-
-The app's launcher entry shows the label and icon compiled into the build, so
-IconShift places a shortcut instead — the same mechanism the "icon changer"
-apps use:
-
-```dart
-await IconShift.setShortcutIdentity(name: 'Work Notes', variant: 'dark');
-final state = await IconShift.getShortcutIdentity();
-// state.isSupported / isPinned / name / iconKey
-await IconShift.removeShortcutIdentity();
-```
-
-* Needs Android 8.0 (API 26) and a launcher that supports pinning;
-  `IconShiftCapabilities.shortcut` reports both, with the reason when not.
-* The **first** call shows the system's "add to home screen" dialog, so the
-  outcome is `pending`; call `getShortcutIdentity()` afterwards to see
-  whether the user accepted. Every later call updates the pinned shortcut
-  silently (`applied`), with no dialog and no limit.
-* The icon may be a bundled asset, a variant's icon or a downloaded
-  [`RemoteIcon`](#remote-icons) — any image, no rebuild.
-* It is an **extra** entry: the app drawer and settings keep the built-in
-  name and icon. No app can take a pinned shortcut off the home screen;
-  `removeShortcutIdentity()` disables it (greyed out) and
-  `setShortcutIdentity()` enables it again.
-* Launchers draw a small badge of the app's own icon on top of a shortcut
-  icon; that badge cannot be removed.
-* A few launchers only pick up a new label or icon after a reboot.
-
-Verified on an Android 10 (API 29) emulator: after the user accepts once,
-`setShortcutIdentity(name: 'Changed At Runtime', icon: …)` changes the label
-and the image on the home screen immediately, with no further dialog
-(`example/integration_test/pin_accept_test.dart`).
+| Android | the launcher entry, when a variant has this name (see above) |
+| iOS | the icon of `variant`; the name cannot change at runtime |
 
 ## Remote icons
 

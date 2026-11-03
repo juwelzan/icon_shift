@@ -160,7 +160,7 @@ The home-screen name and icon are **not** part of in-app branding.
 | --- | --- |
 | macOS, Windows, Linux | Dock/taskbar icon and window title, from the downloaded image |
 | Web | favicon and tab title |
-| Android | a home-screen **shortcut** with the tenant's name and downloaded icon — the app's own entry can only show what the build compiled in (the user accepts once, later changes are silent) |
+| Android | the app's own launcher entry switches to the variant whose compiled-in name matches the tenant's (`changeLauncherName`); otherwise `requiresBuild` |
 | iOS | the icon of `fallbackVariant` if it is in the build; the name **cannot** change at runtime |
 
 It returns a `NativeBrandingReport`, so the app can tell "done" from "needs
@@ -170,8 +170,7 @@ a branded build" instead of guessing:
 final report = await IconShift.applyLauncherBranding(fallbackVariant: 'dark');
 switch (report.scope) {
   case NativeBrandingScope.applied:       // the app's own launcher entry
-  case NativeBrandingScope.shortcut:      // a shortcut beside it (Android)
-  case NativeBrandingScope.requiresBuild: // build this tenant its own app
+  case NativeBrandingScope.requiresBuild: // the name is not in this build
   case NativeBrandingScope.unsupported:   // nothing to change here
 }
 ```
@@ -181,10 +180,10 @@ image into its own launcher icon. So:
 
 ### Mode A — one shared app (default)
 
-Every tenant uses the same build. In-app branding is fully dynamic; the
-launcher shows the app's own name. Tenants that want their name on the home
-screen get the optional shortcut on Android. Switching tenants never needs a
-reinstall.
+Every tenant uses the same build. In-app branding is fully dynamic. On
+Android the launcher entry switches among the tenant names compiled into the
+build (`icon_shift.yaml` variants), at runtime and without a reinstall; on
+iOS it keeps the build's name. Switching tenants never needs a reinstall.
 
 ### Mode B — a branded build per institution, automated
 

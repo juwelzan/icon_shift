@@ -142,6 +142,7 @@ class IconShiftPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
                 "setDisplayName" -> setDisplayName(call.argument<String>("name"), result)
                 "inspect" -> result.success(inspect(call.argument<List<Map<String, Any?>>>("variants").orEmpty()))
                 "getApplicationInfo" -> result.success(applicationInfo())
+                "getLauncherIdentities" -> result.success(launcherIdentities())
                 "loadSelection" -> result.success(SelectionStore(context).load())
                 "saveSelection" -> {
                     SelectionStore(context).save(call.argument<Map<String, String>>("selection").orEmpty())
@@ -193,6 +194,26 @@ class IconShiftPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
                     "IconShift.displayNameListenable so it does not undo a change.",
             ),
         )
+    }
+
+    /**
+     * The launcher identities compiled into this APK, as PackageManager
+     * reports them: one per IconShift activity-alias (retired ones are left
+     * out), with its label and whether it is the enabled launcher entry.
+     * These are the only names the launcher entry can show without a new
+     * build.
+     */
+    private fun launcherIdentities(): List<Map<String, Any?>> {
+        val aliases = registry.aliases().filter { it.retiredTo == null }
+        val states = registry.states(aliases).associateBy { it.componentName }
+        return aliases.map {
+            mapOf(
+                "id" to it.variantId,
+                "label" to it.label,
+                "component" to it.component.className,
+                "enabled" to (states[it.component.className]?.enabled == true),
+            )
+        }
     }
 
     private fun nativeState(): Map<String, Any?> {

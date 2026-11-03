@@ -127,17 +127,22 @@ class _DemoPageState extends State<DemoPage> {
     setState(() => _busy = true);
     try {
       final r = await IconShift.changeLauncherName(_name.text.trim());
-      final where = switch (r.scope) {
-        LauncherNameScope.appEntry => 'Home screen and app drawer',
-        LauncherNameScope.windowTitle => 'Window title',
-        LauncherNameScope.unsupported => 'Not possible here',
+      final headline = switch (r.status) {
+        LauncherNameStatus.success =>
+          r.changed ? 'Launcher renamed' : 'Launcher already shows it',
+        LauncherNameStatus.requiresPreconfiguredLauncher =>
+          'Not compiled into this app',
+        LauncherNameStatus.requiresNewBuild => 'Needs a new build',
+        LauncherNameStatus.unsupported => 'No launcher name on this platform',
+        LauncherNameStatus.platformError => 'The OS refused',
+        LauncherNameStatus.failed => 'Launcher did not follow',
       };
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              '$where: ${r.status.name}\n'
-              'App entry now: ${r.appEntryName ?? '?'}'
+              '$headline\n'
+              'Launcher shows: ${r.appliedName ?? '?'}'
               '${r.message == null ? '' : '\n${r.message}'}',
             ),
           ),

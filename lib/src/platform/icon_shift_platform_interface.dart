@@ -124,6 +124,42 @@ class NativeInspection {
   final Map<String, Object?> info;
 }
 
+/// One launcher identity compiled into the app (Android: an
+/// activity-alias), as the OS reports it.
+@immutable
+class NativeLauncherIdentity {
+  const NativeLauncherIdentity({
+    required this.id,
+    required this.label,
+    required this.enabled,
+    this.component,
+  });
+
+  factory NativeLauncherIdentity.fromMap(Map<Object?, Object?> map) =>
+      NativeLauncherIdentity(
+        id: map['id']! as String,
+        label: map['label']! as String,
+        enabled: map['enabled'] as bool? ?? false,
+        component: map['component'] as String?,
+      );
+
+  /// Variant id the identity belongs to.
+  final String id;
+
+  /// The launcher label, as PackageManager resolves it for this device.
+  final String label;
+
+  /// This is the enabled launcher entry.
+  final bool enabled;
+
+  /// Component class name (Android).
+  final String? component;
+
+  @override
+  String toString() =>
+      'NativeLauncherIdentity($id: "$label"${enabled ? ', enabled' : ''})';
+}
+
 /// The interface each platform implementation of IconShift extends.
 ///
 /// It works with native keys only; configuration logic lives in Dart
@@ -166,6 +202,11 @@ abstract class IconShiftPlatformInterface extends PlatformInterface {
   /// guessing.
   Future<ApplicationInfo> getApplicationInfo() async =>
       const ApplicationInfo(platform: null);
+
+  /// The launcher identities compiled into the app. Empty where launcher
+  /// identities do not exist (iOS, desktop, web).
+  Future<List<NativeLauncherIdentity>> getLauncherIdentities() async =>
+      const [];
 
   /// Sets the theme color (web: `<meta name="theme-color">`), or restores
   /// the original when [argb] is `null`. Unsupported by default.

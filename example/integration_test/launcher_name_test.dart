@@ -1,6 +1,6 @@
 // The installed app's launcher name changes at runtime — no rebuild, no
 // reinstall:
-//   flutter test integration_test/launcher_name_test.dart -d <android device>
+//   flutter test integration_test/launcher_name_test.dart -d <device>
 import 'package:flutter_test/flutter_test.dart';
 import 'package:icon_shift/icon_shift.dart';
 import 'package:icon_shift_example/icon_shift_config.g.dart';
@@ -13,19 +13,25 @@ void main() {
   );
   tearDownAll(() async => IconShift.restoreDefault());
 
-  testWidgets('a compiled-in name reaches the app entry', (_) async {
+  testWidgets('a compiled-in name reaches the launcher entry', (_) async {
     final r = await IconShift.changeLauncherName('IconShift Pro');
     switch (IconShiftPlatform.current) {
       case IconShiftPlatform.android:
-        expect(r.isAppEntryChanged, isTrue, reason: '$r');
+        expect(r.status, LauncherNameStatus.success, reason: '$r');
         expect(
           (await IconShift.getLauncherName()).appEntryName,
           'IconShift Pro',
         );
+        final unknown = await IconShift.changeLauncherName('Not In The APK');
+        expect(
+          unknown.status,
+          LauncherNameStatus.requiresPreconfiguredLauncher,
+        );
+        expect(unknown.appliedName, 'IconShift Pro');
       case IconShiftPlatform.ios:
-        expect(r.scope, LauncherNameScope.unsupported, reason: '$r');
+        expect(r.status, LauncherNameStatus.requiresNewBuild, reason: '$r');
       default:
-        expect(r.isSuccessful, isTrue, reason: '$r');
+        expect(r.status, LauncherNameStatus.unsupported, reason: '$r');
     }
   });
 }

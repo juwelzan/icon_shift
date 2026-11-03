@@ -3,13 +3,15 @@
 Runtime (`icon_shift`):
 
 * Post-install launcher name: `IconShift.changeLauncherName`,
-  `getLauncherName`, `refreshLauncherName` and `syncBranding`. On Android
-  the installed app's home-screen and app-drawer name switch to any name
-  compiled in as a variant (activity-alias), read back from the OS; other
-  names go to a home-screen shortcut. On iOS no public API exists and the
-  call reports `unsupported` / `buildRequired`. `LauncherNameResult` /
-  `LauncherNameInfo` say exactly where the name now shows. Verified on an
-  installed Android 10 app and the iOS 26 simulator.
+  `getLauncherName`, `refreshLauncherName` and `syncBranding` rename the
+  installed app's own launcher entry — home screen and app drawer — on the
+  same install. Android switches to the activity-alias whose compiled-in
+  label matches and reads the label back; iOS has no public API and returns
+  `requiresNewBuild`. `LauncherNameStatus`: `success`, `unsupported`,
+  `requiresPreconfiguredLauncher`, `requiresNewBuild`,
+  `permissionOrPlatformError`, `failed`. Verified on an installed Android 10
+  app (home screen, app drawer, one entry, data kept) and the iOS 26
+  simulator.
 * Multi-tenant (white-label) branding, back-end agnostic:
   `BrandingProvider` (`HttpBrandingProvider`, `CallbackBrandingProvider`,
   `StaticBrandingProvider`, or your own) says which tenant is active and
@@ -22,8 +24,8 @@ Runtime (`icon_shift`):
   unreachable or malformed provider never throws. Versioning falls back to a
   content hash when the server sends no version and no `ETag`.
 * `IconShift.applyLauncherBranding()` returns a `NativeBrandingReport`
-  (`applied`, `shortcut`, `requiresBuild`, `unsupported`), so an app can
-  tell a finished launcher change from one that needs a branded build.
+  (`applied`, `requiresBuild`, `unsupported`), so an app can tell a finished
+  launcher change from one that needs a build.
   See `docs/multi_tenant_branding.md`.
 * Icon appearances for the iOS 26 / macOS 26 home-screen modes:
   `IconAppearances(dark:, tinted:, clear:)` on `AppIdentity` and
@@ -43,17 +45,8 @@ Runtime (`icon_shift`):
   (`IdentityScope.taskSwitcher`) with a message listing the launcher names,
   instead of returning `unsupported`. The recent-apps label also follows the
   active alias right after a switch.
-* Any name and icon at runtime, without a rebuild:
-  `IconShift.setArbitraryIdentity()` applies them through the strongest
-  mechanism a platform has — the app's own identity on macOS, Windows, Linux
-  and web, and a home-screen shortcut on Android, where the launcher entry
-  itself only shows values compiled into the build.
-* Android home-screen shortcut: `setShortcutIdentity()`,
-  `getShortcutIdentity()` and `removeShortcutIdentity()` carry any name and
-  any image (asset, variant or downloaded `RemoteIcon`). The user is asked
-  once (Android 8+, API 26); later changes are silent. New
-  `IconShiftCapabilities.shortcut`, `IdentityScope.launcherShortcut`,
-  `ShortcutIdentityState` and `IconShiftOperation.setShortcutIdentity`.
+* `IconShift.setArbitraryIdentity()` applies a name and icon chosen at
+  runtime to the app itself on macOS, Windows, Linux and web.
 * `IconShift.displayNameListenable` for binding `MaterialApp.title`, which
   otherwise overwrites the Android recent-apps label and web title.
 
