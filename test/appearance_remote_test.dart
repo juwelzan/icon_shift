@@ -188,7 +188,11 @@ void main() {
     final fetched = <Uri>[];
     Uint8List body = _png;
 
-    Future<Uint8List> fetch(Uri url, {required int maxBytes}) async {
+    Future<Uint8List> fetch(
+      Uri url, {
+      required int maxBytes,
+      Map<String, String> headers = const {},
+    }) async {
       fetched.add(url);
       if (url.path.endsWith('.json')) {
         return utf8.encode(

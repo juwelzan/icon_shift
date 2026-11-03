@@ -130,6 +130,7 @@ provisioning stay yours. Guide: [docs/build_time_identity.md](docs/build_time_id
 | [runtime_identity](docs/runtime_identity.md) | configuration, API, persistence, theme sync |
 | [build_time_identity](docs/build_time_identity.md) | ids, names, profiles, backups, migration |
 | [icon_configuration](docs/icon_configuration.md) | sizes, adaptive/monochrome, dark/tinted, outputs |
+| [multi_tenant_branding](docs/multi_tenant_branding.md) | server-driven branding per institution (white-label) |
 | [platform_support](docs/platform_support.md) | per-platform behaviour |
 | [cli](docs/cli.md) | commands and exit codes |
 | [troubleshooting](docs/troubleshooting.md) | symptoms → fixes |

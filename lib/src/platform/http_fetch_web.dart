@@ -8,9 +8,18 @@ Future<Uint8List> httpGetBytes(
   Uri url, {
   required int maxBytes,
   Duration timeout = const Duration(seconds: 15),
+  Map<String, String> headers = const {},
 }) async {
   final response = await web.window
-      .fetch(url.toString().toJS)
+      .fetch(
+        url.toString().toJS,
+        web.RequestInit(
+          headers: headers.entries.fold<web.Headers>(web.Headers(), (h, e) {
+            h.set(e.key, e.value);
+            return h;
+          }),
+        ),
+      )
       .toDart
       .timeout(timeout);
   if (!response.ok) {

@@ -1,0 +1,414 @@
+import 'dart:convert';
+
+import 'package:flutter/foundation.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:icon_shift/icon_shift.dart';
+import 'package:icon_shift/src/engine.dart';
+
+import 'fakes.dart';
+
+/// The live DigiEdu / Schoolmate bootstrap response, verbatim.
+const digiEduResponse = '''
+{"data":{"app_name":"Amena Baki Residential Model School and College",
+"logo_url":null,"favicon_url":null,"primary_color":"#1e40af",
+"secondary_color":"#3b82f6","app_code":"588846"},
+"message":"Branding retrieved successfully."}
+''';
+
+String responseFor(
+  String name, {
+  String? logo,
+  String? favicon,
+  String primary = '#1e40af',
+  String code = '000',
+}) => jsonEncode({
+  'data': {
+    'app_name': name,
+    'logo_url': logo,
+    'favicon_url': favicon,
+    'primary_color': primary,
+    'secondary_color': '#3b82f6',
+    'app_code': code,
+  },
+  'message': 'Branding retrieved successfully.',
+});
+
+BrandingTenant tenantFor(String host) =>
+    BrandingTenant(host: Uri.parse('https://$host.digiedu.online'));
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  group('BrandingProfile', () {
+    test('parses the real DigiEdu response', () {
+      final profile = BrandingProfile.decode(
+        digiEduResponse,
+        tenantId: 'amena-baki.digiedu.online',
+      );
+      expect(
+        profile.appName,
+        'Amena Baki Residential Model School and College',
+      );
+      expect(profile.displayName, profile.appName);
+      expect(profile.primaryColor, 0xFF1E40AF);
+      expect(profile.secondaryColor, 0xFF3B82F6);
+      expect(profile.appCode, '588846');
+      expect(profile.logoUrl, isNull, reason: 'null in the response');
+      expect(profile.launcherIconUrl, isNull);
+      // The endpoint sends no version and no ETag, so one is derived.
+      expect(profile.version, startsWith('c_'));
+    });
+
+    test('the derived version follows the content, not the request', () {
+      final a = BrandingProfile.decode(digiEduResponse, tenantId: 't');
+      final b = BrandingProfile.decode(digiEduResponse, tenantId: 't');
+      expect(a.version, b.version);
+      final changed = BrandingProfile.decode(
+        responseFor('Other School'),
+        tenantId: 't',
+      );
+      expect(changed.version, isNot(a.version));
+    });
+
+    test('accepts the illustrative schema and a flat body', () {
+      final profile = BrandingProfile.parse({
+        'institution_id': 'school_123',
+        'branding_version': 'v12',
+        'app_name': 'ABC School',
+        'institution_name': 'ABC School Trust',
+        'logo_url': 'https://example.com/abc/logo.png',
+        'launcher_icon_url': 'https://example.com/abc/app-icon.png',
+        'primary_color': '#2563EB',
+        'secondary_color': '#4F46E5',
+      }, tenantId: 'school_123');
+      expect(profile.version, 'v12', reason: 'the server version wins');
+      expect(profile.appCode, 'school_123');
+      expect(profile.institutionName, 'ABC School Trust');
+      expect(
+        profile.launcherIconUrl,
+        Uri.parse('https://example.com/abc/app-icon.png'),
+      );
+    });
+
+    test('a favicon stands in for a missing launcher icon', () {
+      final profile = BrandingProfile.parse({
+        'app_name': 'X',
+        'favicon_url': 'https://example.com/fav.png',
+      }, tenantId: 't');
+      expect(profile.launcherIconUrl, Uri.parse('https://example.com/fav.png'));
+    });
+
+    test('hostile or malformed fields are dropped, the rest survives', () {
+      final profile = BrandingProfile.parse({
+        'app_name': 'Good Name',
+        'logo_url': 'http://insecure.example.com/logo.png',
+        'launcher_icon_url': 'javascript:alert(1)',
+        'primary_color': 'red',
+        'secondary_color': '#3b82f6',
+        'extra_flag': true,
+      }, tenantId: 't');
+      expect(profile.appName, 'Good Name');
+      expect(profile.logoUrl, isNull, reason: 'plain http is refused');
+      expect(profile.launcherIconUrl, isNull);
+      expect(profile.primaryColor, isNull);
+      expect(profile.secondaryColor, 0xFF3B82F6);
+      expect(profile.extras['extra_flag'], isTrue);
+    });
+
+    test('strict parsing reports the bad field instead', () {
+      expect(
+        () => BrandingProfile.parse(
+          {'app_name': 'X', 'logo_url': 'http://insecure.example.com/a.png'},
+          tenantId: 't',
+          strict: true,
+        ),
+        throwsA(isA<InvalidArgumentException>()),
+      );
+      expect(
+        () => BrandingProfile.parse('nope', tenantId: 't'),
+        throwsA(isA<InvalidArgumentException>()),
+      );
+      expect(
+        () => BrandingProfile.decode('{oops', tenantId: 't'),
+        throwsA(isA<InvalidArgumentException>()),
+      );
+    });
+
+    test('a name with control characters is refused', () {
+      final profile = BrandingProfile.parse({
+        'app_name': 'Bad\u0000Name',
+        'institution_name': 'ঢাকা আদর্শ বিদ্যালয়',
+      }, tenantId: 't');
+      expect(profile.appName, isNull);
+      expect(profile.displayName, 'ঢাকা আদর্শ বিদ্যালয়');
+    });
+
+    test('colours round-trip through the cache form', () {
+      final profile = BrandingProfile.parse({
+        'app_name': 'X',
+        'primary_color': '#abc',
+      }, tenantId: 't');
+      expect(profile.primaryColor, 0xFFAABBCC);
+      expect(hexColor(profile.primaryColor!), '#AABBCC');
+      final cached = BrandingProfile.decode(
+        jsonEncode(profile.toJson()),
+        tenantId: 't',
+      );
+      expect(cached, profile);
+    });
+
+    test('parseHexColor rejects what is not a colour', () {
+      expect(parseHexColor('#1e40af'), 0xFF1E40AF);
+      expect(parseHexColor('#801e40af'), 0x801E40AF);
+      expect(parseHexColor('1e40af'), isNull);
+      expect(parseHexColor('#12345'), isNull);
+      expect(parseHexColor(''), isNull);
+    });
+  });
+
+  group('BrandingController', () {
+    late FakePlatform platform;
+    late IconShiftEngine engine;
+    final requests = <Uri>[];
+
+    Future<BrandingController> controller({
+      BrandingFetcher? fetch,
+      BrandingProfile? defaultBranding,
+      Map<String, String>? selection,
+    }) async {
+      platform = FakePlatform(desktopLike, selection: selection);
+      engine = IconShiftEngine(
+        platform: platform,
+        targetPlatform: IconShiftPlatform.macos,
+        assetBundle: FakeAssetBundle(demoAssets),
+      );
+      await engine.initialize(demoConfig);
+      return BrandingController(
+        engine: engine,
+        defaultBranding: defaultBranding,
+        fetch:
+            fetch ??
+            (tenant) async {
+              requests.add(tenant.url);
+              return responseFor('School ${tenant.id}', code: tenant.id);
+            },
+      );
+    }
+
+    setUp(requests.clear);
+
+    test('the tenant host becomes the bootstrap endpoint', () {
+      final tenant = tenantFor('abc');
+      expect(tenant.id, 'abc.digiedu.online');
+      expect(
+        tenant.url,
+        Uri.parse('https://abc.digiedu.online/api/v1/branding'),
+      );
+      expect(
+        () => BrandingTenant(host: Uri.parse('http://abc.example.com')),
+        throwsA(isA<InvalidArgumentException>()),
+        reason: 'plain http would expose the school host',
+      );
+    });
+
+    test('loads, caches and reports live branding', () async {
+      final c = await controller();
+      expect(c.value.status, BrandingStatus.idle);
+      expect(c.profile.isEmpty, isTrue);
+
+      final state = await c.load(tenantFor('abc'));
+      expect(state.status, BrandingStatus.live);
+      expect(state.profile.appName, 'School abc.digiedu.online');
+      expect(requests, hasLength(1));
+      // Cached under the tenant, so the next launch starts branded.
+      expect(platform.savedSelection['branding_tenant'], 'abc.digiedu.online');
+      expect(platform.savedSelection['branding'], contains('School abc'));
+    });
+
+    test('a cached school shows before the network answers', () async {
+      var c = await controller();
+      await c.load(tenantFor('abc'));
+      final saved = platform.savedSelection;
+
+      final seen = <BrandingStatus>[];
+      c = await controller(
+        selection: saved,
+        fetch: (tenant) async {
+          // The cached branding must already be on screen by now.
+          expect(seen, contains(BrandingStatus.cached));
+          return responseFor('School abc renamed');
+        },
+      );
+      c.addListener(() => seen.add(c.value.status));
+      final state = await c.load(tenantFor('abc'));
+      expect(seen.first, BrandingStatus.cached);
+      expect(state.status, BrandingStatus.live);
+      expect(state.profile.appName, 'School abc renamed');
+    });
+
+    test('offline keeps the cached branding and never throws', () async {
+      var c = await controller();
+      await c.load(tenantFor('abc'));
+      final saved = platform.savedSelection;
+
+      c = await controller(
+        selection: saved,
+        fetch: (_) async => throw Exception('SocketException'),
+      );
+      final state = await c.load(tenantFor('abc'));
+      expect(state.status, BrandingStatus.offline);
+      expect(state.profile.appName, 'School abc.digiedu.online');
+      expect(state.error, contains('SocketException'));
+    });
+
+    test('offline with no cache falls back to the app branding', () async {
+      final c = await controller(
+        defaultBranding: const BrandingProfile(
+          tenantId: 'default',
+          appName: 'Schoolmate',
+        ),
+        fetch: (_) async => throw Exception('no network'),
+      );
+      final state = await c.load(tenantFor('abc'));
+      expect(state.status, BrandingStatus.offline);
+      expect(state.profile.appName, 'Schoolmate');
+    });
+
+    test('a malformed answer keeps the previous branding', () async {
+      final c = await controller(fetch: (_) async => '<html>503</html>');
+      final state = await c.load(tenantFor('abc'));
+      expect(state.status, BrandingStatus.invalid);
+      expect(state.profile.isEmpty, isTrue);
+      expect(platform.savedSelection.containsKey('branding'), isFalse);
+    });
+
+    test('switching schools never shows the previous one', () async {
+      final seen = <String?>[];
+      final c = await controller();
+      c.addListener(() => seen.add(c.value.profile.appName));
+
+      await c.load(tenantFor('abc'));
+      await c.load(tenantFor('xyz'));
+
+      expect(c.profile.appName, 'School xyz.digiedu.online');
+      expect(platform.savedSelection['branding_tenant'], 'xyz.digiedu.online');
+      expect(
+        platform.savedSelection['branding'],
+        isNot(contains('abc')),
+        reason: 'the previous school must be gone from the cache',
+      );
+      // Between the two schools the app falls back, never to abc's name.
+      final afterSwitch = seen.sublist(
+        seen.indexOf('School abc.digiedu.online') + 1,
+      );
+      expect(afterSwitch, isNot(contains('School abc.digiedu.online')));
+    });
+
+    test('another school cannot read a cached profile', () async {
+      final c = await controller();
+      await c.load(tenantFor('abc'));
+      expect(engine.readBranding('abc.digiedu.online'), isNotNull);
+      expect(
+        engine.readBranding('xyz.digiedu.online'),
+        isNull,
+        reason: 'the cache is keyed by tenant',
+      );
+    });
+
+    test('clear() forgets the school and its cache', () async {
+      final c = await controller();
+      await c.load(tenantFor('abc'));
+      await c.clear();
+      expect(c.tenant, isNull);
+      expect(c.value.status, BrandingStatus.idle);
+      expect(platform.savedSelection.containsKey('branding'), isFalse);
+      expect(platform.savedSelection.containsKey('branding_tenant'), isFalse);
+    });
+
+    test('unchanged branding does not rewrite the cache', () async {
+      var writes = 0;
+      final c = await controller(
+        fetch: (tenant) async {
+          writes++;
+          return responseFor('Same School');
+        },
+      );
+      await c.load(tenantFor('abc'));
+      final afterFirst = platform.savedSelection['branding'];
+      await c.refresh();
+      expect(writes, 2, reason: 'refresh really asks the server');
+      expect(platform.savedSelection['branding'], afterFirst);
+      expect(c.value.status, BrandingStatus.live);
+    });
+
+    test('concurrent loads make one request', () async {
+      final c = await controller();
+      await Future.wait([
+        c.load(tenantFor('abc')),
+        c.load(tenantFor('abc')),
+        c.load(tenantFor('abc')),
+      ]);
+      expect(requests, hasLength(1));
+    });
+
+    test('a saved cache from another school is ignored', () async {
+      final c = await controller(
+        selection: {
+          'branding_tenant': 'other.digiedu.online',
+          'branding': responseFor('Other School'),
+        },
+        fetch: (_) async => throw Exception('offline'),
+      );
+      final state = await c.load(tenantFor('abc'));
+      expect(state.profile.appName, isNot('Other School'));
+      expect(state.profile.isEmpty, isTrue);
+    });
+  });
+
+  group('launcher branding', () {
+    test('desktop applies the name and the downloaded icon', () async {
+      final platform = FakePlatform(desktopLike);
+      final engine = IconShiftEngine(
+        platform: platform,
+        targetPlatform: IconShiftPlatform.macos,
+        assetBundle: FakeAssetBundle(demoAssets),
+        fetch: (url, {required maxBytes, headers = const {}}) async =>
+            Uint8List.fromList([0x89, 0x50, 0x4E, 0x47]),
+      );
+      await engine.initialize(demoConfig);
+      final c = BrandingController(
+        engine: engine,
+        fetch: (t) async => responseFor(
+          'ABC School',
+          favicon: 'https://cdn.example.com/abc.png',
+        ),
+      );
+      await c.load(tenantFor('abc'));
+
+      final result = await c.applyLauncherBranding();
+      expect(result.isComplete, isTrue, reason: '$result');
+      expect(platform.displayName, 'ABC School');
+      expect(platform.iconRequests.last.key, startsWith('remote:'));
+    });
+
+    test('iOS reports the name as build-time, not silently dropped', () async {
+      final platform = FakePlatform(iosLike);
+      final engine = IconShiftEngine(
+        platform: platform,
+        targetPlatform: IconShiftPlatform.ios,
+        assetBundle: FakeAssetBundle(demoAssets),
+      );
+      await engine.initialize(demoConfig);
+      final c = BrandingController(
+        engine: engine,
+        fetch: (t) async => responseFor('ABC School'),
+      );
+      await c.load(tenantFor('abc'));
+
+      final result = await c.applyLauncherBranding(fallbackVariant: 'dark');
+      expect(platform.iconKey, 'dark', reason: 'a bundled icon still applies');
+      expect(result.displayName.status, OperationStatus.unsupported);
+      expect(result.displayName.errorCode, IconShiftErrorCode.buildRequired);
+    });
+  });
+}

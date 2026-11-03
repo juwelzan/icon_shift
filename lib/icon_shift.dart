@@ -2,6 +2,9 @@
 /// macOS, Windows, Linux and web, within what each OS allows.
 library;
 
+export 'src/branding/branding_controller.dart';
+export 'src/branding/branding_profile.dart'
+    show BrandingProfile, hexColor, parseHexColor;
 export 'src/config/app_identity.dart';
 export 'src/config/icon_shift_config.dart';
 export 'src/config/platform.dart';

@@ -3,6 +3,7 @@ import 'package:flutter/widgets.dart'
     show Brightness, WidgetsBinding, WidgetsBindingObserver;
 import 'package:meta/meta.dart' show useResult;
 
+import 'branding/branding_controller.dart';
 import 'config/app_identity.dart';
 import 'config/icon_shift_config.dart';
 import 'config/platform.dart';
@@ -14,6 +15,7 @@ import 'models/diagnostics.dart';
 import 'models/identity_properties.dart';
 import 'models/identity_variant.dart';
 import 'models/preview.dart';
+import 'branding/branding_profile.dart';
 import 'models/remote_icon.dart';
 import 'models/result.dart';
 import 'models/shortcut_identity.dart';
@@ -64,6 +66,7 @@ abstract final class IconShift {
     bool restoreSelection = true,
     String? locale,
     bool followSystemAppearance = true,
+    BrandingProfile? defaultBranding,
   }) async {
     final engine = IconShiftEngine(
       platform: IconShiftPlatformInterface.instance,
@@ -74,12 +77,26 @@ abstract final class IconShift {
     );
     await engine.initialize(config, restoreSelection: restoreSelection);
     _engine = engine;
+    _branding = BrandingController(
+      engine: engine,
+      defaultBranding: defaultBranding,
+    );
     _AppearanceObserver.instance.enabled = followSystemAppearance;
   }
 
   static bool get isInitialized => _engine?.isInitialized ?? false;
 
   static final _displayName = ValueNotifier<String?>(null);
+
+  static BrandingController? _branding;
+
+  /// Server-driven branding for multi-tenant (white-label) apps: one
+  /// institution's name, logo and colours at a time, cached per tenant.
+  ///
+  /// Set [defaultBranding] through [initialize] to decide what the app shows
+  /// before any institution is selected.
+  static BrandingController get branding =>
+      _branding ?? (throw const NotInitializedException());
 
   /// The name the app currently presents: the custom name from
   /// [setDisplayName], else the selected variant's name (localized).

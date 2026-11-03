@@ -35,7 +35,11 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   final fetched = <Uri>[];
-  Future<Uint8List> fetch(Uri url, {required int maxBytes}) async {
+  Future<Uint8List> fetch(
+    Uri url, {
+    required int maxBytes,
+    Map<String, String> headers = const {},
+  }) async {
     fetched.add(url);
     if (url.path.contains('missing')) throw Exception('HTTP 404');
     return _png;

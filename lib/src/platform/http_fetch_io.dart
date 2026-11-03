@@ -8,11 +8,13 @@ Future<Uint8List> httpGetBytes(
   Uri url, {
   required int maxBytes,
   Duration timeout = const Duration(seconds: 15),
+  Map<String, String> headers = const {},
 }) async {
   final client = HttpClient()..connectionTimeout = timeout;
   try {
     final request = await client.getUrl(url).timeout(timeout);
     request.followRedirects = true;
+    headers.forEach(request.headers.set);
     final response = await request.close().timeout(timeout);
     final finalUrl = response.redirects.isEmpty
         ? url

@@ -24,7 +24,11 @@ import 'validation/config_validator.dart';
 
 /// Downloads [url]; used for remote icons. Throws on any failure.
 typedef RemoteFetcher =
-    Future<Uint8List> Function(Uri url, {required int maxBytes});
+    Future<Uint8List> Function(
+      Uri url, {
+      required int maxBytes,
+      Map<String, String> headers,
+    });
 
 /// Selection keys persisted through [IconShiftPlatformInterface.saveSelection].
 abstract final class _Keys {
@@ -34,6 +38,12 @@ abstract final class _Keys {
 
   /// JSON of the applied [RemoteIcon].
   static const remote = 'remote';
+
+  /// Cached [BrandingProfile] JSON of the active institution, and its
+  /// tenant id. Only the active tenant is kept, so branding can never leak
+  /// from one institution into another.
+  static const branding = 'branding';
+  static const brandingTenant = 'branding_tenant';
 }
 
 /// Suffix of the native key while dark artwork is shown.
@@ -1046,6 +1056,15 @@ class IconShiftEngine {
                 ? (_storedIconKey(migrated) ?? '')
                 : migrated;
           }
+        case _Keys.branding:
+          try {
+            jsonDecode(value);
+            recovered[key] = value;
+          } on Object {
+            notes.add('invalid cached branding dropped');
+          }
+        case _Keys.brandingTenant:
+          recovered[key] = value;
         case _Keys.remote:
           try {
             RemoteIcon.decode(value);
@@ -1289,6 +1308,42 @@ class IconShiftEngine {
     } on Object catch (e) {
       debugPrint('IconShift: could not save the selection: $e');
     }
+  }
+
+  /// The cached branding JSON for [tenantId], or `null` when the cache
+  /// belongs to another institution or is empty.
+  String? readBranding(String tenantId) {
+    _requireInitialized();
+    if (_selection[_Keys.brandingTenant] != tenantId) return null;
+    return _selection[_Keys.branding];
+  }
+
+  /// Replaces the cache with [json] for [tenantId], dropping whatever another
+  /// institution had cached.
+  Future<void> writeBranding(String tenantId, String json) {
+    _requireInitialized();
+    return _serialize(
+      () => _saveSelection({
+        ..._selection,
+        _Keys.brandingTenant: tenantId,
+        _Keys.branding: json,
+      }),
+    );
+  }
+
+  /// Forgets the cached branding (logout, or switching institution).
+  Future<void> clearBranding() {
+    _requireInitialized();
+    if (!_selection.containsKey(_Keys.branding) &&
+        !_selection.containsKey(_Keys.brandingTenant)) {
+      return Future.value();
+    }
+    return _serialize(() {
+      final next = {..._selection}
+        ..remove(_Keys.branding)
+        ..remove(_Keys.brandingTenant);
+      return _saveSelection(next);
+    });
   }
 
   Future<T> _serialize<T>(Future<T> Function() action) {

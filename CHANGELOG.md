@@ -2,6 +2,19 @@
 
 Runtime (`icon_shift`):
 
+* Multi-tenant (white-label) branding: `IconShift.branding` serves one
+  institution's name, logo and colours at a time from the school's own
+  server. `BrandingTenant` (the school host is the tenant and the cache key),
+  `BrandingProfile` (parses the DigiEdu/Schoolmate `GET /api/v1/branding`
+  envelope and common aliases, validating colours, https URLs and names),
+  `BrandingController` (`load`, `refresh`, `clear`, `loadLogo`,
+  `applyLauncherBranding`) with a `ValueListenable<BrandingState>`.
+  Cached branding shows first so startup never waits for the network; only
+  the active tenant is cached, so branding cannot leak between schools; an
+  unreachable or malformed server never throws. Versioning falls back to a
+  content hash because the endpoint sends no `branding_version` and no
+  `ETag`. See `docs/multi_tenant_branding.md`.
+
 * Icon appearances for the iOS 26 / macOS 26 home-screen modes:
   `IconAppearances(dark:, tinted:, clear:)` on `AppIdentity` and
   `IdentityOverride`, resolved with the icon they belong to
