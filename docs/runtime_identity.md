@@ -100,8 +100,14 @@ at runtime:
 * the **recent-apps label** follows the active alias right after a switch
   (before, the running task kept the label of the alias it was launched
   from), and
-* `setDisplayName('Anything')` sets it to any string (scope
-  `IdentityScope.taskSwitcher`); `setIdentity()` resets it to the alias label.
+* `setDisplayName(name)` changes the **launcher** label when a variant's
+  alias shows `name` with the current icon (e.g. a name-only variant such as
+  `pro: { name: Notes Pro }`): IconShift switches to that alias. Any other
+  string is shown in the recent-apps screen only (scope
+  `IdentityScope.taskSwitcher`), and the outcome message lists the launcher
+  names that exist. `setCustomIdentity(iconVariant:, displayName:)` does the
+  same with the given icon. `setIdentity()` resets the recent-apps label to
+  the alias label.
 
 Flutter's `MaterialApp.title` writes the same recent-apps label (and the web
 document title) on every rebuild. Bind it to IconShift so a rebuild does not

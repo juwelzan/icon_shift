@@ -120,11 +120,15 @@ class _DemoPageState extends State<DemoPage> {
     }
   }
 
-  static String _summary(IconShiftResult r) => r.isComplete
-      ? 'Done: icon ${r.icon.status.name}, name ${r.displayName.status.name}'
-      : r.hasFailures
-      ? 'Failed: ${r.icon.message ?? r.displayName.message}'
-      : 'Partly applied: icon ${r.icon.status.name}, name ${r.displayName.status.name}';
+  static String _summary(IconShiftResult r) {
+    final status = r.isComplete
+        ? 'Done: icon ${r.icon.status.name}, name ${r.displayName.status.name}'
+        : r.hasFailures
+        ? 'Failed: ${r.icon.message ?? r.displayName.message}'
+        : 'Partly applied: icon ${r.icon.status.name}, name ${r.displayName.status.name}';
+    final note = r.hasFailures ? null : r.displayName.message;
+    return note == null ? status : '$status\n$note';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -292,6 +296,14 @@ class _DemoPageState extends State<DemoPage> {
   Widget _customCard(IconShiftCapabilities caps) {
     final canName = caps.displayName.acceptsArbitraryValues;
     return _section('Custom name / combined update', [
+      if (caps.iconAndNameLinked)
+        Text(
+          'Android launcher names: '
+          '${_variants.map((v) => v.displayName).whereType<String>().toSet().join(', ')}. '
+          'Typing one of them switches the launcher label; any other name '
+          'appears only in the recent-apps screen.',
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
       if (!canName)
         Text(
           'This platform cannot show an arbitrary display name; the buttons '

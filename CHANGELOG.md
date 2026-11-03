@@ -14,9 +14,12 @@ Runtime (`icon_shift`):
   `IconShift.setRemoteIcon()`. Desktop downloads and applies the image, web
   uses the URL as favicon, iOS/Android switch to the bundled variant.
   New `IconShiftErrorCode.downloadFailed`, `IconShiftOperation.setRemoteIcon`.
-* Android display name: the recent-apps label now follows the active alias
-  right after a switch, and `setDisplayName()` sets it to any string
-  (`IdentityScope.taskSwitcher`) instead of returning `unsupported`.
+* Android display name: `setDisplayName()` / `setCustomIdentity()` switch
+  the launcher label when a variant's alias has that name and the same
+  icon (name-only variants). Other names go to the recent-apps label
+  (`IdentityScope.taskSwitcher`) with a message listing the launcher names,
+  instead of returning `unsupported`. The recent-apps label also follows the
+  active alias right after a switch.
 * `IconShift.displayNameListenable` for binding `MaterialApp.title`, which
   otherwise overwrites the Android recent-apps label and web title.
 

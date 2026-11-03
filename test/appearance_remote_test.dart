@@ -340,6 +340,54 @@ void main() {
   });
 
   group('Android names', () {
+    Future<(FakePlatform, IconShiftEngine)> android() async {
+      final platform = FakePlatform(androidTaskLabel)
+        ..aliasLabels = {
+          'default': 'Notes',
+          'pro': 'Notes Pro',
+          'night': 'Notes Night',
+        };
+      final e = IconShiftEngine(
+        platform: platform,
+        targetPlatform: IconShiftPlatform.android,
+        assetBundle: FakeAssetBundle(appearanceAssets),
+      );
+      await e.initialize(appearanceConfig);
+      return (platform, e);
+    }
+
+    test('a launcher name with the current icon switches the alias', () async {
+      final (platform, e) = await android();
+      final result = await e.setDisplayName('Notes Pro');
+      expect(result.isComplete, isTrue, reason: '$result');
+      expect(platform.iconKey, 'pro', reason: 'the pro alias shows that name');
+      expect(platform.calls, isNot(contains('setDisplayName:Notes Pro')));
+      expect(e.displayName.value, 'Notes Pro');
+
+      // Back to the default name: back to the default alias.
+      await e.setDisplayName('Notes');
+      expect(platform.iconKey, 'default');
+    });
+
+    test('a launcher name with another icon is not used', () async {
+      final (platform, e) = await android();
+      final result = await e.setDisplayName('Notes Night');
+      expect(platform.iconKey, 'default', reason: 'night has another icon');
+      expect(result.displayName.message, contains('recent-apps screen only'));
+      expect(result.displayName.message, contains('"Notes Pro"'));
+    });
+
+    test('setCustomIdentity picks the alias with both', () async {
+      final (platform, e) = await android();
+      final result = await e.setCustomIdentity(
+        iconVariant: 'night',
+        displayName: 'Notes Night',
+      );
+      expect(result.isComplete, isTrue, reason: '$result');
+      expect(platform.iconKey, 'night');
+      expect(platform.calls, isNot(contains('setDisplayName:Notes Night')));
+    });
+
     test('custom names go to the task label; variants reset it', () async {
       final platform = FakePlatform(androidTaskLabel)
         ..aliasLabels = {'default': 'Notes', 'pro': 'Notes Pro'};

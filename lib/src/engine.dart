@@ -158,7 +158,15 @@ class IconShiftEngine {
     _requireInitialized();
     _requireValidName(name);
     return _serialize(() async {
-      final outcome = await _applyName(name);
+      if (_capabilities.iconAndNameLinked) {
+        // Android: the launcher shows the alias label, so switch to the
+        // variant whose alias has this name and the current icon.
+        final match = _linkedVariantFor(await _activeVariant(), name);
+        if (match != null) {
+          return _setIdentity(match, IconShiftOperation.setDisplayName);
+        }
+      }
+      final outcome = _explainLinked(await _applyName(name), name);
       await _commit(outcome, {_Keys.identity: null, _Keys.name: name});
       return _result(
         IconShiftOperation.setDisplayName,
@@ -182,6 +190,15 @@ class IconShiftEngine {
     if (displayName != null) _requireValidName(displayName);
 
     return _serialize(() async {
+      if (_capabilities.iconAndNameLinked && displayName != null) {
+        final match = _linkedVariantFor(
+          iconVariant ?? await _activeVariant(),
+          displayName,
+        );
+        if (match != null) {
+          return _setIdentity(match, IconShiftOperation.setCustomIdentity);
+        }
+      }
       var icon = const OperationOutcome.notRequested();
       String? linkedName;
       if (iconVariant != null) {
@@ -204,7 +221,7 @@ class IconShiftEngine {
       } else if (icon.status == OperationStatus.failed) {
         name = _skippedAfterIconFailure;
       } else {
-        name = await _applyName(displayName);
+        name = _explainLinked(await _applyName(displayName), displayName);
         await _commit(name, {_Keys.identity: null, _Keys.name: displayName});
       }
       return _result(IconShiftOperation.setCustomIdentity, icon, name);
@@ -676,6 +693,51 @@ class IconShiftEngine {
       OperationStatus.skipped => _skippedAfterIconFailure,
       OperationStatus.unsupported || OperationStatus.notRequested => icon,
     };
+  }
+
+  /// The variant the OS shows now (Android: the enabled alias).
+  Future<String> _activeVariant() async {
+    try {
+      final key = _logicalKey((await platform.getNativeState()).iconKey);
+      final id = key == null ? null : config.migrateVariantId(key);
+      if (id != null) return id;
+    } on Object catch (e) {
+      debugPrint('IconShift: could not read native state: $e');
+    }
+    return _selection[_Keys.identity] ?? _selection[_Keys.icon] ?? _defaultId;
+  }
+
+  /// Linked platforms: the variant that shows [name] with the icon of
+  /// [iconVariant], so the launcher label can change without changing the
+  /// picture. `null` when no variant has that combination.
+  String? _linkedVariantFor(String iconVariant, String name) {
+    if (!config.hasVariant(iconVariant)) return null;
+    final icon = _resolve(iconVariant).icon;
+    final matches = [
+      for (final id in config.variantIds)
+        if (_resolve(id) case final r when r.name == name && r.icon == icon) id,
+    ];
+    if (matches.contains(iconVariant)) return iconVariant;
+    return matches.isEmpty ? null : matches.first;
+  }
+
+  /// Linked platforms: a custom name only reaches the recent-apps label;
+  /// says so, and which launcher names exist, instead of a bare "applied".
+  OperationOutcome _explainLinked(OperationOutcome outcome, String name) {
+    if (!_capabilities.iconAndNameLinked || !outcome.isSuccessful) {
+      return outcome;
+    }
+    final names = {
+      for (final id in config.variantIds) ?_resolve(id).name,
+    }.map((n) => '"$n"').join(', ');
+    return OperationOutcome(
+      outcome.status,
+      message:
+          '"$name" is shown in the recent-apps screen only. The launcher can '
+          'only show names compiled into the app ($names); add a variant '
+          'named "$name" to icon_shift.yaml and run icon_shift_cli generate '
+          'to make it a launcher name.',
+    );
   }
 
   static const _skippedAfterIconFailure = OperationOutcome.skipped(
