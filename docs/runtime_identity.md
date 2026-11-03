@@ -176,7 +176,14 @@ await IconShift.removeShortcutIdentity();
   name and icon. No app can take a pinned shortcut off the home screen;
   `removeShortcutIdentity()` disables it (greyed out) and
   `setShortcutIdentity()` enables it again.
+* Launchers draw a small badge of the app's own icon on top of a shortcut
+  icon; that badge cannot be removed.
 * A few launchers only pick up a new label or icon after a reboot.
+
+Verified on an Android 10 (API 29) emulator: after the user accepts once,
+`setShortcutIdentity(name: 'Changed At Runtime', icon: …)` changes the label
+and the image on the home screen immediately, with no further dialog
+(`example/integration_test/pin_accept_test.dart`).
 
 ## Remote icons
 

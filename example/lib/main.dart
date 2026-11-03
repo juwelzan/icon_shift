@@ -338,7 +338,9 @@ class _DemoPageState extends State<DemoPage> {
             onPressed: _busy
                 ? null
                 : () => _run(() => IconShift.setDisplayName(_name.text)),
-            child: const Text('Set name'),
+            child: Text(
+              caps.iconAndNameLinked ? 'Set name (recents only)' : 'Set name',
+            ),
           ),
           OutlinedButton(
             key: const ValueKey('set-both'),
