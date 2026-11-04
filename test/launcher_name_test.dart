@@ -248,6 +248,11 @@ void main() {
     expect(platform.iconRequests, isEmpty);
     final info = await e.getLauncherName();
     expect(info.canSwitchAppEntry, isFalse);
+
+    // The name the build already carries is not a change.
+    final same = await e.changeLauncherName('Schoolmate');
+    expect(same.status, LauncherNameStatus.success);
+    expect(same.changed, isFalse);
   });
 
   test('desktop has no launcher name and touches nothing', () async {

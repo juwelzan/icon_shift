@@ -17,7 +17,7 @@ void main() {
     final r = await IconShift.changeLauncherName('IconShift Pro');
     switch (IconShiftPlatform.current) {
       case IconShiftPlatform.android:
-        expect(r.status, LauncherNameStatus.success, reason: '$r');
+        expect(r.status.name, 'success', reason: '$r');
         expect(
           (await IconShift.getLauncherName()).appEntryName,
           'IconShift Pro',
@@ -25,13 +25,13 @@ void main() {
         final unknown = await IconShift.changeLauncherName('Not In The APK');
         expect(
           unknown.status,
-          LauncherNameStatus.requiresPreconfiguredLauncher,
+          'requiresPreconfiguredLauncher',
         );
         expect(unknown.appliedName, 'IconShift Pro');
       case IconShiftPlatform.ios:
-        expect(r.status, LauncherNameStatus.requiresNewBuild, reason: '$r');
+        expect(r.status.name, 'requiresNewBuild', reason: '$r');
       default:
-        expect(r.status, LauncherNameStatus.unsupported, reason: '$r');
+        expect(r.status.name, 'unsupported', reason: '$r');
     }
   });
 }

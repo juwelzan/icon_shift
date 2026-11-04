@@ -127,15 +127,16 @@ class _DemoPageState extends State<DemoPage> {
     setState(() => _busy = true);
     try {
       final r = await IconShift.changeLauncherName(_name.text.trim());
-      final headline = switch (r.status) {
-        LauncherNameStatus.success =>
+      final headline = switch (r.status.name) {
+        'success' =>
           r.changed ? 'Launcher renamed' : 'Launcher already shows it',
-        LauncherNameStatus.requiresPreconfiguredLauncher =>
+        'requiresPreconfiguredLauncher' =>
           'Not compiled into this app',
-        LauncherNameStatus.requiresNewBuild => 'Needs a new build',
-        LauncherNameStatus.unsupported => 'No launcher name on this platform',
-        LauncherNameStatus.platformError => 'The OS refused',
-        LauncherNameStatus.failed => 'Launcher did not follow',
+        'requiresNewBuild' => 'Needs a new build',
+        'unsupported' => 'No launcher name on this platform',
+        'platformError' => 'The OS refused',
+        'failed' => 'Launcher did not follow',
+        _ => 'Launcher name could not be changed',
       };
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

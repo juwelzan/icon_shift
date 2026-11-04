@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 import '../config/platform.dart';
+import 'launcher_name.dart';
 
 /// Where a change made by IconShift is visible.
 enum IdentityScope {
@@ -166,6 +167,58 @@ class IconShiftCapabilities {
   /// Icons must be prepared as native resources at build time.
   bool get requiresPreconfiguredResources =>
       icon.requiresPreconfiguredResources;
+
+  // --- Launcher identity (the installed app's home-screen / drawer entry).
+
+  /// The installed app's own launcher name can change at runtime — among
+  /// the names compiled into the app (Android only).
+  bool get canChangeLauncherName =>
+      platform == IconShiftPlatform.android &&
+      iconAndNameLinked &&
+      icon.isSupported;
+
+  /// The installed app's own launcher icon can change at runtime — among
+  /// the icons compiled into the app (Android activity-aliases, iOS
+  /// alternate icons).
+  bool get canChangeLauncherIcon =>
+      (platform == IconShiftPlatform.android ||
+          platform == IconShiftPlatform.ios) &&
+      icon.isSupported &&
+      icon.scope == IdentityScope.launcher;
+
+  /// Launcher names are switched among values compiled into the app.
+  bool get supportsPreconfiguredLauncherNames => canChangeLauncherName;
+
+  /// Launcher icons are switched among values compiled into the app.
+  bool get supportsPreconfiguredLauncherIcons => canChangeLauncherIcon;
+
+  /// A launcher name that is not compiled into the app needs a new build —
+  /// true on every platform: none lets an installed app take an arbitrary
+  /// launcher name.
+  bool get requiresNewBuildForCustomName => true;
+
+  /// Launcher and identity features available here.
+  Set<IconShiftFeature> get supportedFeatures => {
+    if (supportsPreconfiguredLauncherNames)
+      IconShiftFeature.preconfiguredLauncherNames,
+    if (supportsPreconfiguredLauncherIcons)
+      IconShiftFeature.preconfiguredLauncherIcons,
+    if (icon.isSupported &&
+        (icon.scope == IdentityScope.runningApp ||
+            icon.scope == IdentityScope.browserTab))
+      IconShiftFeature.runningAppIcon,
+    if (displayName.isSupported &&
+        (displayName.scope == IdentityScope.windowTitle ||
+            displayName.scope == IdentityScope.browserTab))
+      IconShiftFeature.windowTitle,
+    if (displayName.isSupported &&
+        displayName.scope == IdentityScope.taskSwitcher)
+      IconShiftFeature.recentAppsLabel,
+  };
+
+  /// Every feature not in [supportedFeatures].
+  Set<IconShiftFeature> get unsupportedFeatures =>
+      IconShiftFeature.values.toSet().difference(supportedFeatures);
 
   factory IconShiftCapabilities.fromMap(
     IconShiftPlatform? platform,

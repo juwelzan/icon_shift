@@ -34,6 +34,7 @@ class MethodChannelIconShift extends IconShiftPlatformInterface {
         await methodChannel.invokeMapMethod<Object?, Object?>('setIcon', {
           'key': request.key,
           'bytes': request.bytes,
+          if (request.immediate) 'immediate': true,
         }),
       );
 

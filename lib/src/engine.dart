@@ -320,175 +320,401 @@ class IconShiftEngine {
 
   /// Changes the name the **installed** app's own launcher entry shows —
   /// home screen and app drawer — without a rebuild or reinstall, as far as
-  /// the OS allows. The result is read back from the OS, not assumed; only
-  /// [LauncherNameStatus.success] means the launcher shows [name].
+  /// the OS allows. The result is read back from the OS, not assumed.
   ///
   /// * **Android** — the launcher shows the label of the enabled
-  ///   activity-alias. When a variant carries [name], its alias is enabled
-  ///   with `PackageManager.setComponentEnabledSetting` (the new one before
-  ///   the old one is disabled, so the app always stays launchable). The
-  ///   current icon is kept when a variant has both. A name that is not
-  ///   compiled into the app is
-  ///   [LauncherNameStatus.requiresPreconfiguredLauncher]: Android has no
-  ///   API to give a component a label that is not in the APK.
-  /// * **iOS** — [LauncherNameStatus.requiresNewBuild]: the Home Screen
-  ///   name is `CFBundleDisplayName` of the signed bundle and no public API
-  ///   changes it.
-  /// * **macOS, Windows, Linux, web** — [LauncherNameStatus.unsupported].
+  ///   activity-alias. [name] is matched exactly against the labels compiled
+  ///   into the APK (read from PackageManager); a match is enabled with
+  ///   `PackageManager.setComponentEnabledSetting`, the new entry before the
+  ///   old one is disabled. Android finishes a screen whose launcher entry
+  ///   is disabled, so when the visible screen was opened through the entry
+  ///   being replaced, the switch waits until the app leaves the foreground
+  ///   ([IconShiftStatus.pending]) unless [immediate]. Any other name:
+  ///   [IconShiftStatus.requiresPreconfiguredLauncher], nothing changed.
+  /// * **iOS** — [IconShiftStatus.requiresNewBuild]: the Home Screen name is
+  ///   `CFBundleDisplayName` of the signed bundle and no public API changes
+  ///   it (asking for the name it already has is [IconShiftStatus.success]).
+  /// * **macOS, Windows, Linux, web** — [IconShiftStatus.unsupported]; the
+  ///   window / tab title is not touched.
   ///
   /// Nothing else is ever created — no widget, no shortcut, no second icon.
-  Future<LauncherNameResult> changeLauncherName(String name) async {
+  Future<LauncherResult> changeLauncherName(
+    String name, {
+    bool immediate = false,
+  }) async {
     _requireInitialized();
     _requireValidName(name);
     await _serialize(
       () => _saveSelection({..._selection, _Keys.launcherName: name}),
     );
 
-    LauncherNameResult report(
-      LauncherNameStatus status, {
-      IconShiftResult? result,
-      String? applied,
-      bool changed = false,
-      int? enabled,
-      List<String> available = const [],
-      LauncherRefresh refresh = LauncherRefresh.notApplicable,
-      String? message,
-      IconShiftErrorCode code = IconShiftErrorCode.unsupportedOperation,
-    }) => LauncherNameResult(
-      requestedName: name,
-      status: status,
-      platform: targetPlatform,
-      result:
-          result ??
-          _result(
-            IconShiftOperation.setDisplayName,
-            const OperationOutcome.notRequested(),
-            OperationOutcome.unsupported(message ?? status.name, code: code),
-          ),
-      appliedName: applied,
-      changed: changed,
-      enabledEntries: enabled,
-      availableNames: available,
-      launcherRefresh: refresh,
-      message: message,
-    );
-
     if (_capabilities.iconAndNameLinked) {
-      // The identities really compiled into this APK, not what the Dart
-      // config believes: the APK is what the launcher reads.
-      final List<NativeLauncherIdentity> identities;
-      try {
-        identities = await platform.getLauncherIdentities();
-      } on Object catch (e) {
-        return report(
-          LauncherNameStatus.platformError,
-          message: 'Could not read the launcher identities: $e',
-          code: IconShiftErrorCode.nativeOperationFailed,
-        );
-      }
-      final available = {for (final i in identities) i.label}.toList();
-      final before = identities.where((i) => i.enabled).toList();
-      final candidates = identities.where((i) => i.label == name).toList();
-      if (candidates.isEmpty) {
-        return report(
-          LauncherNameStatus.requiresPreconfiguredLauncher,
-          applied: before.length == 1 ? before.single.label : null,
-          enabled: before.length,
-          available: available,
-          code: IconShiftErrorCode.missingNativeResource,
-          message:
-              '"$name" is not one of the launcher identities compiled into '
-              'this app, so nothing was changed. Available: '
-              '${available.map((n) => '"$n"').join(', ')}. Add "$name" as a '
-              'variant in icon_shift.yaml and ship that build once.',
-        );
-      }
-      // Several aliases may share a label; keep the current icon if one
-      // of them has it.
-      final current = await _activeVariant();
-      final preferred = _linkedVariantFor(current, name);
-      final target =
-          candidates.where((i) => i.id == preferred).firstOrNull ??
-          candidates.first;
-      if (before.length == 1 && before.single.id == target.id) {
-        return report(
-          LauncherNameStatus.success,
-          applied: target.label,
-          enabled: 1,
-          available: available,
-          result: _result(
-            IconShiftOperation.setIdentity,
-            const OperationOutcome(OperationStatus.unchanged),
-            const OperationOutcome(OperationStatus.unchanged),
-          ),
-        );
-      }
-
-      final result = await setIdentity(target.id);
-      if (!result.icon.isSuccessful) {
-        return report(
-          LauncherNameStatus.platformError,
-          result: result,
-          applied: before.length == 1 ? before.single.label : null,
-          enabled: before.length,
-          available: available,
-          message: result.icon.message,
-        );
-      }
-      // Read back what PackageManager now has enabled.
-      final after = (await platform.getLauncherIdentities())
-          .where((i) => i.enabled)
-          .toList();
-      final applied = after.length == 1 ? after.single.label : null;
-      if (after.length != 1 || applied != name) {
-        return report(
-          LauncherNameStatus.failed,
-          result: result,
-          applied: applied,
-          changed: true,
-          enabled: after.length,
-          available: available,
-          message:
-              'PackageManager reports ${after.length} enabled launcher '
-              'entr${after.length == 1 ? 'y' : 'ies'} '
-              '(${after.map((i) => '"${i.label}"').join(', ')}) after '
-              'switching to "${target.id}".',
-        );
-      }
-      return report(
-        LauncherNameStatus.success,
-        result: result,
-        applied: applied,
-        changed: true,
-        enabled: 1,
-        available: available,
-        refresh: LauncherRefresh.expected,
-        message: _resolve(target.id).icon == _resolve(current).icon
-            ? null
-            : 'Identity "${target.id}" carries this name with its own icon, '
-                  'so the icon changed too.',
+      return _switchLauncherEntry(
+        LauncherProperty.name,
+        name,
+        immediate: immediate,
+        pick: (identities, current) {
+          final candidates = identities.where((i) => i.label == name);
+          // Several aliases may share a label; keep the current icon if one
+          // of them has it.
+          final preferred = _linkedVariantFor(current, name);
+          return candidates.where((i) => i.id == preferred).firstOrNull ??
+              candidates.firstOrNull;
+        },
+        missing: (available) =>
+            '"$name" is not one of the launcher names compiled into this app, '
+            'so nothing was changed. Available: '
+            '${available.map((n) => '"$n"').join(', ')}. Add "$name" as a '
+            'variant in icon_shift.yaml and ship that build once.',
       );
     }
 
+    final shown = await _appEntryName();
     if (targetPlatform == IconShiftPlatform.ios) {
-      return report(
-        LauncherNameStatus.requiresNewBuild,
-        applied: await _appEntryName(),
-        code: IconShiftErrorCode.buildRequired,
-        message:
-            'iOS has no public API to change an installed app\'s Home Screen '
-            'name: it is CFBundleDisplayName in the signed bundle, and '
-            'setAlternateIconName changes only the icon. Only a new build '
-            'changes it.',
-      );
+      return shown == name
+          ? _launcherResult(
+              LauncherProperty.name,
+              IconShiftStatus.success,
+              name,
+              applied: shown,
+            )
+          : _launcherResult(
+              LauncherProperty.name,
+              IconShiftStatus.requiresNewBuild,
+              name,
+              applied: shown,
+              message:
+                  'iOS has no public API to change an installed app\'s Home '
+                  'Screen name: it is CFBundleDisplayName in the signed '
+                  'bundle, and setAlternateIconName changes only the icon. '
+                  'Only a new build changes it.',
+            );
     }
-    return report(
-      LauncherNameStatus.unsupported,
-      applied: await _appEntryName(),
+    return _launcherResult(
+      LauncherProperty.name,
+      IconShiftStatus.unsupported,
+      name,
       message:
           '${_platformName()} has no launcher name an app can change at '
           'runtime. setDisplayName() changes the window / tab title instead.',
     );
+  }
+
+  /// Changes the installed app's own launcher **icon** to [iconKey] — a
+  /// variant id from the configuration whose icon is compiled into the app:
+  ///
+  /// * **Android** — enables the activity-alias of [iconKey]. Each alias
+  ///   carries one icon and one label, so when that variant has a different
+  ///   name the launcher name changes too (the result says so). Deferred
+  ///   like [changeLauncherName] unless [immediate].
+  /// * **iOS** — `setAlternateIconName` with the alternate icon set of
+  ///   [iconKey] (iOS shows its own confirmation alert). The Home Screen
+  ///   name does not change.
+  /// * **macOS, Windows, Linux, web** — [IconShiftStatus.unsupported]: their
+  ///   launcher icon is part of the build. [setIcon] changes the running
+  ///   app's Dock/taskbar icon or favicon instead.
+  ///
+  /// `default` restores the icon the app shipped with.
+  Future<LauncherResult> changeLauncherIcon(
+    String iconKey, {
+    bool immediate = false,
+  }) async {
+    _requireInitialized();
+    if (iconKey.trim().isEmpty) {
+      throw const InvalidArgumentException(
+        'changeLauncherIcon needs an icon key.',
+      );
+    }
+    final known = config.hasVariant(iconKey);
+
+    if (_capabilities.iconAndNameLinked) {
+      return _switchLauncherEntry(
+        LauncherProperty.icon,
+        iconKey,
+        immediate: immediate,
+        pick: (identities, current) {
+          if (!known) return null;
+          // Prefer an alias with this icon and the current name.
+          final wanted = _resolve(iconKey).icon;
+          final currentName = _resolve(current).name;
+          final sameIcon = identities.where(
+            (i) => config.hasVariant(i.id) && _resolve(i.id).icon == wanted,
+          );
+          return sameIcon
+                  .where((i) => _resolve(i.id).name == currentName)
+                  .firstOrNull ??
+              identities.where((i) => i.id == iconKey).firstOrNull;
+        },
+        missing: (_) =>
+            'No launcher entry with the icon of "$iconKey" is compiled into '
+            'this app, so nothing was changed.',
+      );
+    }
+
+    if (targetPlatform == IconShiftPlatform.ios) {
+      if (!_capabilities.icon.isSupported) {
+        return _launcherResult(
+          LauncherProperty.icon,
+          IconShiftStatus.unsupported,
+          iconKey,
+          message: _capabilities.icon.limitation,
+        );
+      }
+      if (!known) {
+        return _launcherResult(
+          LauncherProperty.icon,
+          IconShiftStatus.requiresPreconfiguredLauncher,
+          iconKey,
+          message: '"$iconKey" is not a variant in the configuration.',
+        );
+      }
+      final key = _nativeIconKey(iconKey);
+      final before = await _nativeIconKeyNow();
+      final result = await _serialize(
+        () => _setIdentity(iconKey, IconShiftOperation.setIcon),
+      );
+      final after = await _nativeIconKeyNow();
+      final outcome = result.icon;
+      if (!outcome.isSuccessful) {
+        return _launcherResult(
+          LauncherProperty.icon,
+          outcome.errorCode == IconShiftErrorCode.missingNativeResource
+              ? IconShiftStatus.requiresPreconfiguredLauncher
+              : IconShiftStatus.platformError,
+          iconKey,
+          applied: after,
+          details: result,
+          message: outcome.message,
+        );
+      }
+      return _launcherResult(
+        LauncherProperty.icon,
+        after == key ? IconShiftStatus.success : IconShiftStatus.failed,
+        iconKey,
+        applied: after,
+        changed: after != before,
+        details: result,
+        message: after == key
+            ? 'The Home Screen name is unchanged: alternate icons carry no name.'
+            : 'iOS reports the icon "$after" after switching to "$key".',
+      );
+    }
+
+    return _launcherResult(
+      LauncherProperty.icon,
+      IconShiftStatus.unsupported,
+      iconKey,
+      message:
+          '${_platformName()} has no launcher icon an app can change at '
+          'runtime. setIcon() changes the running app\'s icon instead.',
+    );
+  }
+
+  /// Android: switches the enabled activity-alias to the identity [pick]
+  /// chooses, then reads PackageManager back.
+  Future<LauncherResult> _switchLauncherEntry(
+    LauncherProperty property,
+    String requested, {
+    required bool immediate,
+    required NativeLauncherIdentity? Function(
+      List<NativeLauncherIdentity> identities,
+      String currentVariant,
+    )
+    pick,
+    required String Function(List<String> available) missing,
+  }) async {
+    String? appliedOf(NativeLauncherIdentity i) =>
+        property == LauncherProperty.name ? i.label : i.id;
+
+    final List<NativeLauncherIdentity> identities;
+    try {
+      identities = await platform.getLauncherIdentities();
+    } on Object catch (e) {
+      return _launcherResult(
+        property,
+        IconShiftStatus.platformError,
+        requested,
+        message: 'Could not read the launcher identities: $e',
+      );
+    }
+    final available = [
+      for (final v in {for (final i in identities) ?appliedOf(i)}) v,
+    ];
+    final before = identities.where((i) => i.enabled).toList();
+    final current = before.length == 1 ? before.single : null;
+    final target = pick(identities, current?.id ?? await _activeVariant());
+    if (target == null) {
+      return _launcherResult(
+        property,
+        IconShiftStatus.requiresPreconfiguredLauncher,
+        requested,
+        applied: current == null ? null : appliedOf(current),
+        enabled: before.length,
+        available: available,
+        message: missing(available),
+      );
+    }
+    if (current?.id == target.id) {
+      return _launcherResult(
+        property,
+        IconShiftStatus.success,
+        requested,
+        applied: appliedOf(target),
+        enabled: 1,
+        available: available,
+      );
+    }
+
+    final result = await _serialize(
+      () => _setIdentity(
+        target.id,
+        IconShiftOperation.setIdentity,
+        immediate: immediate,
+      ),
+    );
+    final outcome = result.icon;
+    if (outcome.status == OperationStatus.pending) {
+      return _launcherResult(
+        property,
+        IconShiftStatus.pending,
+        requested,
+        applied: current == null ? null : appliedOf(current),
+        enabled: before.length,
+        available: available,
+        details: result,
+        message:
+            'Switches to "${target.label}" when the app leaves the foreground: '
+            'this screen was opened through the launcher entry being '
+            'replaced, and Android closes such a screen. Pass immediate: true '
+            'to switch now and let it close.',
+      );
+    }
+    if (!outcome.isSuccessful) {
+      return _launcherResult(
+        property,
+        IconShiftStatus.platformError,
+        requested,
+        applied: current == null ? null : appliedOf(current),
+        enabled: before.length,
+        available: available,
+        details: result,
+        message: outcome.message,
+      );
+    }
+    final after = (await platform.getLauncherIdentities())
+        .where((i) => i.enabled)
+        .toList();
+    final applied = after.length == 1 ? appliedOf(after.single) : null;
+    final expected = appliedOf(target);
+    if (after.length != 1 || applied != expected) {
+      return _launcherResult(
+        property,
+        IconShiftStatus.failed,
+        requested,
+        applied: applied,
+        changed: true,
+        enabled: after.length,
+        available: available,
+        details: result,
+        message:
+            'PackageManager reports ${after.length} enabled launcher '
+            'entr${after.length == 1 ? 'y' : 'ies'} '
+            '(${after.map((i) => '"${i.label}"').join(', ')}) after '
+            'switching to "${target.id}".',
+      );
+    }
+    final nameChanged = current != null && current.label != target.label;
+    final iconChanged =
+        current != null &&
+        config.hasVariant(current.id) &&
+        _resolve(current.id).icon != _resolve(target.id).icon;
+    return _launcherResult(
+      property,
+      IconShiftStatus.success,
+      requested,
+      applied: applied,
+      changed: true,
+      enabled: 1,
+      available: available,
+      details: result,
+      refresh: LauncherRefresh.expected,
+      message: switch (property) {
+        LauncherProperty.name when iconChanged =>
+          'Identity "${target.id}" carries this name with its own icon, so '
+              'the icon changed too.',
+        LauncherProperty.icon when nameChanged =>
+          'Identity "${target.id}" carries this icon with the name '
+              '"${target.label}", so the launcher name changed too.',
+        _ => null,
+      },
+    );
+  }
+
+  LauncherResult _launcherResult(
+    LauncherProperty property,
+    IconShiftStatus status,
+    String requested, {
+    String? applied,
+    bool changed = false,
+    int? enabled,
+    List<String> available = const [],
+    LauncherRefresh refresh = LauncherRefresh.notApplicable,
+    IconShiftResult? details,
+    String? message,
+  }) => LauncherResult(
+    property: property,
+    status: status,
+    requestedValue: requested,
+    appliedValue: applied,
+    platform: targetPlatform,
+    changed: changed,
+    enabledEntries: enabled,
+    availableValues: available,
+    launcherRefresh: refresh,
+    details: details,
+    message: message,
+  );
+
+  /// The icon key the OS reports right now, without the dark suffix.
+  Future<String?> _nativeIconKeyNow() async {
+    try {
+      return _logicalKey((await platform.getNativeState()).iconKey);
+    } on Object {
+      return null;
+    }
+  }
+
+  /// The installed app's launcher identity, as far as the OS reports it.
+  Future<LauncherIdentity> _launcherIdentity(NativeIdentityState native) async {
+    switch (targetPlatform) {
+      case IconShiftPlatform.android:
+        final enabled = (await _launcherIdentitiesOrEmpty())
+            .where((i) => i.enabled)
+            .toList();
+        final one = enabled.length == 1 ? enabled.single : null;
+        return LauncherIdentity(
+          platform: targetPlatform,
+          name: one?.label,
+          iconKey: one?.id,
+          isNameVerified: one != null,
+          isIconVerified: one != null,
+          pendingIconKey: _logicalKey(native.pendingIconKey),
+        );
+      case IconShiftPlatform.ios:
+        final name = await _appEntryName();
+        final icon = _logicalKey(native.iconKey);
+        return LauncherIdentity(
+          platform: targetPlatform,
+          name: name,
+          iconKey: icon,
+          isNameVerified: name != null,
+          isIconVerified: icon != null,
+        );
+      default:
+        // The launcher entry of a desktop app or PWA belongs to its
+        // installer; IconShift cannot read it reliably.
+        return LauncherIdentity(platform: targetPlatform);
+    }
   }
 
   /// The launcher names of this install, read from the OS.
@@ -498,18 +724,18 @@ class IconShiftEngine {
     return LauncherNameInfo(
       appEntryName:
           identities.where((i) => i.enabled).singleOrNull?.label ??
-          await _appEntryName(),
+          (targetPlatform == IconShiftPlatform.ios
+              ? await _appEntryName()
+              : null),
       requestedName: _selection[_Keys.launcherName],
-      availableNames: identities.isEmpty
-          ? _launcherNames()
-          : {for (final i in identities) i.label}.toList(),
-      canSwitchAppEntry: _capabilities.iconAndNameLinked,
+      availableNames: {for (final i in identities) i.label}.toList(),
+      canSwitchAppEntry: _capabilities.canChangeLauncherName,
     );
   }
 
   /// Applies the last requested launcher name again. `null` when no name
   /// was requested.
-  Future<LauncherNameResult?> refreshLauncherName() async {
+  Future<LauncherResult?> refreshLauncherName() async {
     _requireInitialized();
     final name = _selection[_Keys.launcherName];
     if (name == null) return null;
@@ -532,12 +758,6 @@ class IconShiftEngine {
     } on Object {
       return null;
     }
-  }
-
-  /// Distinct names the app entry can switch to.
-  List<String> _launcherNames() {
-    if (!_capabilities.iconAndNameLinked) return const [];
-    return {for (final id in config.variantIds) ?_resolve(id).name}.toList();
   }
 
   /// Downloads and parses the [RemoteIcon] JSON at [url].
@@ -614,6 +834,7 @@ class IconShiftEngine {
       nativeIconVariant: _logicalKey(native.iconKey),
       nativeDisplayName: native.displayName,
       pendingIconVariant: _logicalKey(native.pendingIconKey),
+      launcher: await _launcherIdentity(native),
     );
   }
 
@@ -743,10 +964,11 @@ class IconShiftEngine {
 
   Future<IconShiftResult> _setIdentity(
     String variantId,
-    IconShiftOperation operation,
-  ) async {
+    IconShiftOperation operation, {
+    bool immediate = false,
+  }) async {
     final resolved = _resolve(variantId);
-    final icon = await _applyIcon(variantId);
+    final icon = await _applyIcon(variantId, immediate: immediate);
 
     final OperationOutcome name;
     if (_capabilities.iconAndNameLinked) {
@@ -782,8 +1004,9 @@ class IconShiftEngine {
   }
 
   Future<({OperationOutcome outcome, String? linkedName})> _applyIcon(
-    String variantId,
-  ) async {
+    String variantId, {
+    bool immediate = false,
+  }) async {
     if (!_capabilities.icon.isSupported) {
       return (
         outcome: OperationOutcome.unsupported(
@@ -834,6 +1057,7 @@ class IconShiftEngine {
           key: key,
           assetKey: key == defaultIconKey ? null : icon?.assetKey,
           bytes: bytes,
+          immediate: immediate,
         ),
       );
       return (

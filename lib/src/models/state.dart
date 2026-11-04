@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 
 import '../config/icon_shift_config.dart';
 import '../config/platform.dart';
+import 'launcher_name.dart';
 
 /// The app's identity as requested by the app and as reported by the OS.
 ///
@@ -23,7 +24,12 @@ class IconShiftState {
     this.nativeIconVariant,
     this.nativeDisplayName,
     this.pendingIconVariant,
+    this.launcher,
   });
+
+  /// The installed app's launcher identity (name under the icon, icon key),
+  /// with which values were read from the OS. `null` from implementations
+  /// that predate it.
 
   final IconShiftPlatform? platform;
 
@@ -47,6 +53,8 @@ class IconShiftState {
 
   /// Variant the OS has accepted but not applied yet, if any.
   final String? pendingIconVariant;
+
+  final LauncherIdentity? launcher;
 
   /// Effective icon variant: native when known, otherwise requested.
   String get currentIconVariant =>
@@ -78,7 +86,8 @@ class IconShiftState {
       other.requestedDisplayName == requestedDisplayName &&
       other.nativeIconVariant == nativeIconVariant &&
       other.nativeDisplayName == nativeDisplayName &&
-      other.pendingIconVariant == pendingIconVariant;
+      other.pendingIconVariant == pendingIconVariant &&
+      other.launcher == launcher;
 
   @override
   int get hashCode => Object.hash(
@@ -89,6 +98,7 @@ class IconShiftState {
     nativeIconVariant,
     nativeDisplayName,
     pendingIconVariant,
+    launcher,
   );
 
   @override

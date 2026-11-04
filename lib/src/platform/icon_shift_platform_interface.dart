@@ -18,7 +18,13 @@ class NativeIconRequest {
     this.assetKey,
     this.bytes,
     this.url,
+    this.immediate = false,
   });
+
+  /// Android: switch now even if it closes the visible screen. By default a
+  /// switch that would disable the launcher entry the visible screen was
+  /// opened through waits until the app leaves the foreground (`pending`).
+  final bool immediate;
 
   /// Variant id of the icon, or [defaultIconKey] to restore the shipped icon.
   /// Dark artwork of a variant uses `<id>@dark`, remote icons

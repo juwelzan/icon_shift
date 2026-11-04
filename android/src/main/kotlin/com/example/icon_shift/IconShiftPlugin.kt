@@ -2,7 +2,9 @@ package com.example.icon_shift
 
 import android.app.Activity
 import android.app.ActivityManager
+import android.app.Application
 import android.content.Context
+import android.os.Bundle
 import android.content.pm.PackageManager
 import android.os.Build
 import android.util.Log
@@ -34,11 +36,38 @@ class IconShiftPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
     /** Name from setDisplayName; null shows the active alias label. */
     private var customLabel: String? = null
 
+    /** Activities of this app that are started (visible). */
+    private var startedActivities = 0
+
+    /**
+     * Applies a deferred launcher switch once the app has left the
+     * foreground. Disabling the component the visible screen was opened
+     * through makes Android finish that task ("disabled-package"), so the
+     * switch waits until nothing is on screen.
+     */
+    private val lifecycle = object : Application.ActivityLifecycleCallbacks {
+        override fun onActivityStarted(a: Activity) {
+            startedActivities++
+        }
+
+        override fun onActivityStopped(a: Activity) {
+            startedActivities = maxOf(0, startedActivities - 1)
+            if (startedActivities == 0 && !a.isChangingConfigurations) applyPendingSwitch()
+        }
+
+        override fun onActivityCreated(a: Activity, state: Bundle?) {}
+        override fun onActivityResumed(a: Activity) {}
+        override fun onActivityPaused(a: Activity) {}
+        override fun onActivitySaveInstanceState(a: Activity, state: Bundle) {}
+        override fun onActivityDestroyed(a: Activity) {}
+    }
+
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         context = binding.applicationContext
         registry = AliasRegistry(context)
         channel = MethodChannel(binding.binaryMessenger, "icon_shift")
         channel.setMethodCallHandler(this)
+        (context as? Application)?.registerActivityLifecycleCallbacks(lifecycle)
         recoverLauncherEntry()
     }
 
@@ -63,6 +92,40 @@ class IconShiftPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         channel.setMethodCallHandler(null)
+        (context as? Application)?.unregisterActivityLifecycleCallbacks(lifecycle)
+    }
+
+    private val pendingStore get() =
+        context.getSharedPreferences("icon_shift_native", Context.MODE_PRIVATE)
+
+    /** Variant whose alias is waiting to be enabled, if any. */
+    private var pendingSwitch: String?
+        get() = pendingStore.getString("pending_variant", null)
+        set(value) {
+            pendingStore.edit().apply {
+                if (value == null) remove("pending_variant") else putString("pending_variant", value)
+            }.apply()
+        }
+
+    /** The switch would disable the component the visible screen came from. */
+    private fun closesVisibleScreen(steps: List<SwitchStep>): Boolean {
+        if (startedActivities == 0) return false
+        val opened = activity?.componentName?.className ?: return false
+        return steps.any { !it.enable && it.componentName == opened }
+    }
+
+    private fun applyPendingSwitch() {
+        val key = pendingSwitch ?: return
+        pendingSwitch = null
+        try {
+            val plan = AliasSwitchPlanner.plan(registry.states(registry.aliases()), key)
+            if (plan is SwitchPlan.Apply) {
+                registry.apply(plan.steps)
+                Log.i(TAG, "Applied the deferred launcher switch to \"$key\".")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Deferred launcher switch to \"$key\" failed", e)
+        }
     }
 
     override fun onAttachedToActivity(binding: ActivityPluginBinding) {
@@ -138,7 +201,11 @@ class IconShiftPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
             when (call.method) {
                 "getCapabilities" -> result.success(capabilities())
                 "getNativeState" -> result.success(nativeState())
-                "setIcon" -> setIcon(call.argument<String>("key"), result)
+                "setIcon" -> setIcon(
+                    call.argument<String>("key"),
+                    call.argument<Boolean>("immediate") ?: false,
+                    result,
+                )
                 "setDisplayName" -> setDisplayName(call.argument<String>("name"), result)
                 "inspect" -> result.success(inspect(call.argument<List<Map<String, Any?>>>("variants").orEmpty()))
                 "getApplicationInfo" -> result.success(applicationInfo())
@@ -221,11 +288,12 @@ class IconShiftPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
         val active = AliasSwitchPlanner.activeVariant(registry.states(aliases))
         return mapOf(
             "iconKey" to active,
+            "pendingIconKey" to pendingSwitch,
             "displayName" to (customLabel ?: aliases.firstOrNull { it.variantId == active }?.label),
         )
     }
 
-    private fun setIcon(key: String?, result: Result) {
+    private fun setIcon(key: String?, immediate: Boolean, result: Result) {
         if (key.isNullOrEmpty()) {
             result.error("invalid_argument", "setIcon needs a variant key.", null)
             return
@@ -245,12 +313,27 @@ class IconShiftPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
                 null,
             )
             SwitchPlan.Unchanged -> {
+                // Asking for what is already active cancels a deferred switch.
+                pendingSwitch = null
                 // Switching to the active variant still drops a custom name.
                 customLabel = null
                 applyTaskLabel()
                 result.success(mapOf("status" to "unchanged", "displayName" to label))
             }
             is SwitchPlan.Apply -> {
+                if (!immediate && closesVisibleScreen(plan.steps)) {
+                    pendingSwitch = key
+                    result.success(
+                        mapOf(
+                            "status" to "pending",
+                            "displayName" to label,
+                            "message" to "Switches when the app leaves the foreground: disabling the " +
+                                "launcher entry this screen was opened from would make Android close it.",
+                        ),
+                    )
+                    return
+                }
+                pendingSwitch = null
                 registry.apply(plan.steps)
                 // Read back instead of assuming success.
                 val active = AliasSwitchPlanner.activeVariant(registry.states(registry.aliases()))

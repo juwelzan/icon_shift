@@ -292,13 +292,25 @@ class BrandingController extends ChangeNotifier
       final launcher = await _engine.changeLauncherName(name);
       return NativeBrandingReport(
         scope: switch (launcher.status) {
-          LauncherNameStatus.success => NativeBrandingScope.applied,
-          LauncherNameStatus.requiresPreconfiguredLauncher ||
-          LauncherNameStatus.requiresNewBuild =>
-            NativeBrandingScope.requiresBuild,
+          IconShiftStatus.success ||
+          IconShiftStatus.pending => NativeBrandingScope.applied,
+          IconShiftStatus.requiresPreconfiguredLauncher ||
+          IconShiftStatus.requiresNewBuild => NativeBrandingScope.requiresBuild,
           _ => NativeBrandingScope.unsupported,
         },
-        result: launcher.result,
+        result:
+            launcher.details ??
+            IconShiftResult(
+              icon: const OperationOutcome.notRequested(),
+              displayName: OperationOutcome(
+                launcher.success
+                    ? OperationStatus.unchanged
+                    : OperationStatus.unsupported,
+                message: launcher.message,
+              ),
+              operation: IconShiftOperation.setDisplayName,
+              platform: launcher.platform,
+            ),
         message: launcher.message,
       );
     }
